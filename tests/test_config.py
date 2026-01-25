@@ -92,10 +92,19 @@ def test_settings_case_sensitivity(valid_env: None, monkeypatch: pytest.MonkeyPa
     # Set lowercase key
     monkeypatch.setenv("vault_addr", "http://vault:8200")
 
-    # Since case_sensitive=True, this should fail (missing field)
-    with pytest.raises(ValidationError) as excinfo:
-        get_settings()
-    assert "Field required" in str(excinfo.value)
+    # On Windows, environment variables are case-insensitive.
+    # Pydantic reading os.environ["VAULT_ADDR"] will find "vault_addr" value.
+    # So on Windows, this passes. On Linux/Unix, it fails.
+    import sys
+
+    if sys.platform == "win32":
+        settings = get_settings()
+        assert str(settings.VAULT_ADDR) == "http://vault:8200/"
+    else:
+        # Since case_sensitive=True, this should fail (missing field)
+        with pytest.raises(ValidationError) as excinfo:
+            get_settings()
+        assert "Field required" in str(excinfo.value)
 
 
 def test_settings_complex_validation_priority(valid_env: None, monkeypatch: pytest.MonkeyPatch) -> None:
