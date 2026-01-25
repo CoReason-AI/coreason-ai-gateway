@@ -17,7 +17,7 @@ repos:
     rev: v1.18.2
     hooks:
       - id: mypy
-        additional_dependencies: [pydantic, pydantic-settings, pytest]
+        additional_dependencies: [pydantic, pydantic-settings, pytest, fastapi, redis, types-redis]
   - repo: https://github.com/AleksaC/hadolint-py
     rev: v2.14.0
     hooks:

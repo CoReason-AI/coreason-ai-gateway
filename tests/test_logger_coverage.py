@@ -52,4 +52,3 @@ def test_logger_dir_creation(monkeypatch: pytest.MonkeyPatch) -> None:
         del sys.modules["coreason_ai_gateway.utils.logger"]
 
     # Re-import real module to restore state for other tests?
-    import coreason_ai_gateway.utils.logger  # noqa: F401

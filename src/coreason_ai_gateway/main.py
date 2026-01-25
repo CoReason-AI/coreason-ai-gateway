@@ -8,9 +8,17 @@
 #
 # Source Code: https://github.com/CoReason-AI/coreason_ai_gateway
 
-from coreason_ai_gateway.utils.logger import logger
+import uvicorn
+
+from .server import app
 
 
-def hello_world() -> str:
-    logger.info("Hello World!")
-    return "Hello World!"
+def main() -> None:
+    """
+    Entry point for the application.
+    """
+    uvicorn.run(app, host="0.0.0.0", port=8000)
+
+
+if __name__ == "__main__":
+    main()
