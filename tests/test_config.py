@@ -54,3 +54,58 @@ def test_settings_forbidden_keys(valid_env: None, monkeypatch: pytest.MonkeyPatc
 
     with pytest.raises(ValueError, match="Security Violation"):
         get_settings()
+
+
+def test_settings_invalid_urls(valid_env: None, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("VAULT_ADDR", "not-a-url")
+    with pytest.raises(ValidationError) as excinfo:
+        get_settings()
+    assert "Input should be a valid URL" in str(excinfo.value)
+
+    monkeypatch.setenv("VAULT_ADDR", "http://vault:8200")  # Reset
+    monkeypatch.setenv("REDIS_URL", "not-a-redis-url")  # Redis URL validation is loose, but let's see
+    # AnyUrl allows almost anything with a scheme. "not-a-redis-url" has no scheme.
+    with pytest.raises(ValidationError):
+        get_settings()
+
+
+def test_settings_empty_values(valid_env: None, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("VAULT_ROLE_ID", "")
+    # Pydantic usually allows empty strings for str unless min_length is set.
+    # However, AnyUrl might fail if empty.
+    # Let's check strictness. If the model doesn't specify min_length, empty string is valid for str.
+    # But usually config variables shouldn't be empty.
+    # The current Settings model does not enforce min_length on VAULT_ROLE_ID.
+    # So this might pass. Let's test assumption.
+    # If it passes (no error), we might want to strengthen the model.
+    # For now, let's see what happens.
+
+    settings = get_settings()
+    assert settings.VAULT_ROLE_ID == ""
+    # NOTE: If this passes, I should consider adding min_length=1 to the model in a future step or now.
+    # For this test, I will assert current behavior.
+
+
+def test_settings_case_sensitivity(valid_env: None, monkeypatch: pytest.MonkeyPatch) -> None:
+    # Clear correct keys
+    monkeypatch.delenv("VAULT_ADDR", raising=False)
+    # Set lowercase key
+    monkeypatch.setenv("vault_addr", "http://vault:8200")
+
+    # Since case_sensitive=True, this should fail (missing field)
+    with pytest.raises(ValidationError) as excinfo:
+        get_settings()
+    assert "Field required" in str(excinfo.value)
+
+
+def test_settings_complex_validation_priority(valid_env: None, monkeypatch: pytest.MonkeyPatch) -> None:
+    # Scenario: Forbidden key present AND Invalid URL.
+    # Goal: Ensure forbidden key check (root validator) runs.
+    # Pydantic's model_validator(mode="before") runs on the raw dict before field validation.
+    # So the Security Violation should raise BEFORE the invalid URL error.
+
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-evil")
+    monkeypatch.setenv("VAULT_ADDR", "not-a-url")
+
+    with pytest.raises(ValueError, match="Security Violation"):
+        get_settings()
