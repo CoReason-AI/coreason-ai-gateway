@@ -218,3 +218,33 @@ async def test_streaming_success(mock_dependencies: dict[str, Any]) -> None:
 
         # Verify accounting
         assert mock_dependencies["redis"].pipeline.called
+
+
+@pytest.mark.anyio
+async def test_streaming_with_options(mock_dependencies: dict[str, Any]) -> None:
+    # Test that stream_options are passed correctly
+    async def response_generator(**kwargs: Any) -> AsyncGenerator[ChatCompletionChunk, None]:
+        chunk = MagicMock(spec=ChatCompletionChunk)
+        chunk.model_dump_json.return_value = '{"id": "1", "choices": []}'
+        chunk.usage = None
+        yield chunk
+
+    mock_dependencies["client"].chat.completions.create.side_effect = response_generator
+
+    with TestClient(app) as client:
+        client.post(
+            "/v1/chat/completions",
+            json={
+                "model": "gpt-4",
+                "messages": [{"role": "user", "content": "hello"}],
+                "stream": True,
+                "stream_options": {"include_usage": True},
+            },
+            headers={"Authorization": "Bearer valid-token", "X-Coreason-Project-ID": "proj-1"},
+        )
+
+        # Verify call arguments
+        call_args = mock_dependencies["client"].chat.completions.create.call_args
+        assert call_args
+        assert call_args.kwargs.get("stream") is True
+        assert call_args.kwargs.get("stream_options") == {"include_usage": True}
