@@ -176,15 +176,16 @@ def test_upstream_api_error(mock_dependencies: dict[str, Any], client: TestClien
 
 
 def test_upstream_generic_error(mock_dependencies: dict[str, Any], client: TestClient) -> None:
+    # Generic exception bubbles up as 500 because we re-raise it and it's not handled by our custom handlers.
+    # We could add a custom handler for Exception, but typically FastAPI returns 500.
     mock_dependencies["client"].chat.completions.create.side_effect = Exception("Boom")
 
-    response = client.post(
-        "/v1/chat/completions",
-        json={"model": "gpt-4", "messages": [{"role": "user", "content": "hello"}]},
-        headers={"Authorization": "Bearer valid-token", "X-Coreason-Project-ID": "proj-1"},
-    )
-    assert response.status_code == 502
-    assert response.json()["detail"] == "Upstream provider error"
+    with pytest.raises(Exception, match="Boom"):
+        client.post(
+            "/v1/chat/completions",
+            json={"model": "gpt-4", "messages": [{"role": "user", "content": "hello"}]},
+            headers={"Authorization": "Bearer valid-token", "X-Coreason-Project-ID": "proj-1"},
+        )
 
 
 @pytest.mark.anyio

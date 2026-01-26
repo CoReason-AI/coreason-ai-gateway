@@ -25,8 +25,6 @@ from fastapi.responses import StreamingResponse
 from openai import (
     APIConnectionError,
     AsyncOpenAI,
-    AuthenticationError,
-    BadRequestError,
     InternalServerError,
     RateLimitError,
 )
@@ -39,6 +37,8 @@ from tenacity import (
 )
 
 from .config import get_settings
+from .dependencies import RedisDep, VaultDep
+from .exception_handlers import register_exception_handlers
 from .middleware.accounting import record_usage
 from .middleware.auth import verify_gateway_token
 from .middleware.budget import check_budget, estimate_tokens
@@ -96,6 +96,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
 
 app = FastAPI(title="Coreason AI Gateway", lifespan=lifespan)
+register_exception_handlers(app)
 
 
 @app.get("/health")
@@ -111,6 +112,8 @@ async def chat_completions(
     request: Request,
     body: ChatCompletionRequest,
     background_tasks: BackgroundTasks,
+    redis_client: RedisDep,
+    vault_client: VaultDep,
     token: Annotated[str, Depends(verify_gateway_token)],
     x_coreason_project_id: Annotated[str, Header()],
     x_coreason_trace_id: Annotated[str | None, Header()] = None,
@@ -119,16 +122,18 @@ async def chat_completions(
     Proxies chat completion requests to LLM providers.
     Enforces authentication, budgeting, and JIT secret injection.
     """
+    settings = get_settings()
+
     # 1. Budget Check (Fail Fast)
     estimated_tokens = estimate_tokens(body.messages)
-    await check_budget(x_coreason_project_id, estimated_tokens, app.state.redis)
+    await check_budget(x_coreason_project_id, estimated_tokens, redis_client)
 
     # 2. Secret Retrieval (JIT)
     provider_path = resolve_provider_path(body.model)
     try:
         # According to TRD: secret/infrastructure/{provider}
         secret_path = f"secret/{provider_path}"
-        secret_data = await app.state.vault.get_secret(secret_path)
+        secret_data = await vault_client.get_secret(secret_path)
     except Exception as e:
         logger.exception(f"Vault secret retrieval failed for {provider_path}")
         raise HTTPException(
@@ -153,31 +158,25 @@ async def chat_completions(
         kwargs = body.model_dump(exclude_unset=True)
 
         async for attempt in AsyncRetrying(
-            stop=stop_after_attempt(3),
-            wait=wait_exponential(multiplier=1, min=2, max=10),
+            stop=stop_after_attempt(settings.RETRY_STOP_AFTER_ATTEMPT),
+            wait=wait_exponential(multiplier=1, min=settings.RETRY_WAIT_MIN, max=settings.RETRY_WAIT_MAX),
             retry=retry_if_exception_type((RateLimitError, APIConnectionError, InternalServerError)),
             reraise=True,
         ):
             with attempt:
                 response = await client.chat.completions.create(**kwargs)
 
-    except RateLimitError as e:
-        await client.close()
-        raise HTTPException(status_code=429, detail="Upstream provider rate limit exceeded") from e
-    except BadRequestError as e:
-        await client.close()
-        raise HTTPException(status_code=400, detail=f"Upstream provider rejected request: {str(e)}") from e
-    except AuthenticationError as e:
-        await client.close()
-        logger.error(f"Upstream authentication failed for {provider_path}: {str(e)}")
-        raise HTTPException(status_code=502, detail="Upstream authentication failed") from e
-    except (APIConnectionError, InternalServerError) as e:
-        await client.close()
-        raise HTTPException(status_code=502, detail=f"Upstream provider error: {str(e)}") from e
     except Exception as e:
+        # Exceptions are now handled by global exception handlers.
+        # However, we must ensure client is closed.
         await client.close()
-        logger.exception("Unexpected upstream error")
-        raise HTTPException(status_code=502, detail="Upstream provider error") from e
+        # If it's not one of our handled types, we might want to log it or let it bubble up.
+        # But if we let it bubble up, FastAPI catches it as 500 if unhandled.
+        # Our exception handlers cover OpenAI errors. Generic Exception is not covered.
+        # So we should probably re-raise or handle as 500 explicitly if we want custom logging.
+        # But we also have retry logic which catches exceptions.
+        # Wait, tenacity re-raises.
+        raise e
 
     # 4. Handle Response
     if body.stream:
@@ -196,19 +195,12 @@ async def chat_completions(
             finally:
                 await client.close()
                 if usage:
-                    # We can't use background_tasks here because the response is already returned
-                    # But we can schedule it on the loop or just call it.
-                    # Since record_usage is async and we are in async generator, we can await it.
-                    # But ideally we want to return quickly.
-                    # record_usage is fire-and-forget in accounting.py? No, it's async def.
-                    # We should await it here, or create a task.
-                    # Since we are cleaning up, awaiting is fine.
-                    await record_usage(x_coreason_project_id, usage, app.state.redis)
+                    await record_usage(x_coreason_project_id, usage, redis_client)
 
         return StreamingResponse(stream_generator(), media_type="text/event-stream")
 
     else:
         # response is ChatCompletion
         await client.close()
-        background_tasks.add_task(record_usage, x_coreason_project_id, response.usage, app.state.redis)
+        background_tasks.add_task(record_usage, x_coreason_project_id, response.usage, redis_client)
         return response

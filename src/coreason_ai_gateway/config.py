@@ -34,6 +34,11 @@ class Settings(BaseSettings):
     # Security
     GATEWAY_ACCESS_TOKEN: SecretStr
 
+    # Resilience
+    RETRY_STOP_AFTER_ATTEMPT: int = 3
+    RETRY_WAIT_MIN: int = 2
+    RETRY_WAIT_MAX: int = 10
+
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", case_sensitive=True, extra="ignore")
 
     @model_validator(mode="before")
