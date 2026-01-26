@@ -53,12 +53,18 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # 3. Teardown
     logger.info("Shutting down Coreason AI Gateway...")
     if hasattr(app.state, "redis"):
-        await app.state.redis.close()
-        logger.info("Redis connection closed.")
+        try:
+            await app.state.redis.close()
+            logger.info("Redis connection closed.")
+        except Exception:
+            logger.exception("Failed to close Redis connection")
 
     if hasattr(app.state, "vault"):
-        await app.state.vault.close()
-        logger.info("Vault connection closed.")
+        try:
+            await app.state.vault.close()
+            logger.info("Vault connection closed.")
+        except Exception:
+            logger.exception("Failed to close Vault connection")
 
 
 app = FastAPI(title="Coreason AI Gateway", lifespan=lifespan)
