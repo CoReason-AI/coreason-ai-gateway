@@ -218,3 +218,154 @@ async def test_streaming_success(mock_dependencies: dict[str, Any]) -> None:
 
         # Verify accounting
         assert mock_dependencies["redis"].pipeline.called
+
+
+@pytest.mark.anyio
+async def test_streaming_with_options(mock_dependencies: dict[str, Any]) -> None:
+    # Test that stream_options are passed correctly
+    async def response_generator(**kwargs: Any) -> AsyncGenerator[ChatCompletionChunk, None]:
+        chunk = MagicMock(spec=ChatCompletionChunk)
+        chunk.model_dump_json.return_value = '{"id": "1", "choices": []}'
+        chunk.usage = None
+        yield chunk
+
+    mock_dependencies["client"].chat.completions.create.side_effect = response_generator
+
+    with TestClient(app) as client:
+        client.post(
+            "/v1/chat/completions",
+            json={
+                "model": "gpt-4",
+                "messages": [{"role": "user", "content": "hello"}],
+                "stream": True,
+                "stream_options": {"include_usage": True},
+            },
+            headers={"Authorization": "Bearer valid-token", "X-Coreason-Project-ID": "proj-1"},
+        )
+
+        # Verify call arguments
+        call_args = mock_dependencies["client"].chat.completions.create.call_args
+        assert call_args
+        assert call_args.kwargs.get("stream") is True
+        assert call_args.kwargs.get("stream_options") == {"include_usage": True}
+
+
+@pytest.mark.anyio
+async def test_streaming_options_ignored_when_not_streaming(mock_dependencies: dict[str, Any]) -> None:
+    # stream_options should be allowed even if stream=False
+    # (OpenAI allows this, though it might be ignored or used for final usage)
+    # The important thing is that the gateway passes it through.
+    mock_response = MagicMock()
+    mock_response.usage.total_tokens = 10
+    mock_response.model_dump.return_value = {"id": "123", "choices": []}
+    mock_dependencies["client"].chat.completions.create.return_value = mock_response
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/v1/chat/completions",
+            json={
+                "model": "gpt-4",
+                "messages": [{"role": "user", "content": "hello"}],
+                "stream": False,
+                "stream_options": {"include_usage": True},
+            },
+            headers={"Authorization": "Bearer valid-token", "X-Coreason-Project-ID": "proj-1"},
+        )
+        assert response.status_code == 200
+        call_args = mock_dependencies["client"].chat.completions.create.call_args
+        assert call_args.kwargs.get("stream") is False
+        assert call_args.kwargs.get("stream_options") == {"include_usage": True}
+
+
+@pytest.mark.anyio
+async def test_streaming_with_none_options(mock_dependencies: dict[str, Any]) -> None:
+    # Explicitly sending null/None for stream_options
+    async def response_generator(**kwargs: Any) -> AsyncGenerator[ChatCompletionChunk, None]:
+        chunk = MagicMock(spec=ChatCompletionChunk)
+        chunk.model_dump_json.return_value = '{"id": "1", "choices": []}'
+        yield chunk
+
+    mock_dependencies["client"].chat.completions.create.side_effect = response_generator
+
+    with TestClient(app) as client:
+        client.post(
+            "/v1/chat/completions",
+            json={
+                "model": "gpt-4",
+                "messages": [{"role": "user", "content": "hello"}],
+                "stream": True,
+                "stream_options": None,
+            },
+            headers={"Authorization": "Bearer valid-token", "X-Coreason-Project-ID": "proj-1"},
+        )
+        call_args = mock_dependencies["client"].chat.completions.create.call_args
+        # None should be passed or excluded depending on how model_dump(exclude_unset=True) behaves.
+        # If it was sent as None in JSON, it's set to None.
+        # But wait, exclude_unset=True excludes fields that were NOT set in the constructor.
+        # If we send "stream_options": None in JSON, Pydantic sees it as set to None.
+        # Let's check if it is in kwargs.
+        assert "stream_options" in call_args.kwargs
+        assert call_args.kwargs["stream_options"] is None
+
+
+@pytest.mark.anyio
+async def test_streaming_include_usage_false(mock_dependencies: dict[str, Any]) -> None:
+    async def response_generator(**kwargs: Any) -> AsyncGenerator[ChatCompletionChunk, None]:
+        chunk = MagicMock(spec=ChatCompletionChunk)
+        chunk.model_dump_json.return_value = '{"id": "1", "choices": []}'
+        yield chunk
+
+    mock_dependencies["client"].chat.completions.create.side_effect = response_generator
+
+    with TestClient(app) as client:
+        client.post(
+            "/v1/chat/completions",
+            json={
+                "model": "gpt-4",
+                "messages": [{"role": "user", "content": "hello"}],
+                "stream": True,
+                "stream_options": {"include_usage": False},
+            },
+            headers={"Authorization": "Bearer valid-token", "X-Coreason-Project-ID": "proj-1"},
+        )
+        call_args = mock_dependencies["client"].chat.completions.create.call_args
+        assert call_args.kwargs.get("stream_options") == {"include_usage": False}
+
+
+@pytest.mark.anyio
+async def test_complex_streaming_scenario(mock_dependencies: dict[str, Any]) -> None:
+    # Test combination of tools, stop, and stream_options
+    async def response_generator(**kwargs: Any) -> AsyncGenerator[ChatCompletionChunk, None]:
+        chunk = MagicMock(spec=ChatCompletionChunk)
+        chunk.model_dump_json.return_value = '{"id": "1", "choices": []}'
+        yield chunk
+
+    mock_dependencies["client"].chat.completions.create.side_effect = response_generator
+
+    tools = [
+        {
+            "type": "function",
+            "function": {"name": "get_weather", "description": "Get weather", "parameters": {"type": "object"}},
+        }
+    ]
+
+    with TestClient(app) as client:
+        client.post(
+            "/v1/chat/completions",
+            json={
+                "model": "gpt-4",
+                "messages": [{"role": "user", "content": "hello"}],
+                "stream": True,
+                "stream_options": {"include_usage": True},
+                "tools": tools,
+                "tool_choice": "auto",
+                "stop": ["STOP"],
+            },
+            headers={"Authorization": "Bearer valid-token", "X-Coreason-Project-ID": "proj-1"},
+        )
+        call_args = mock_dependencies["client"].chat.completions.create.call_args
+        assert call_args.kwargs.get("stream") is True
+        assert call_args.kwargs.get("stream_options") == {"include_usage": True}
+        assert call_args.kwargs.get("tools") == tools
+        assert call_args.kwargs.get("tool_choice") == "auto"
+        assert call_args.kwargs.get("stop") == ["STOP"]
