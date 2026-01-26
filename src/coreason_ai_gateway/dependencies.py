@@ -8,14 +8,14 @@
 #
 # Source Code: https://github.com/CoReason-AI/coreason_ai_gateway
 
-from typing import Annotated, Any
+from typing import Annotated
 
 from coreason_vault import VaultManagerAsync
 from fastapi import Depends, Request
 from redis.asyncio import Redis
 
 
-def get_redis_client(request: Request) -> Redis[Any]:
+def get_redis_client(request: Request) -> Redis:  # type: ignore[type-arg]
     """
     Dependency to retrieve the Redis client from app state.
     """
@@ -34,5 +34,5 @@ def get_vault_client(request: Request) -> VaultManagerAsync:
 
 
 # Type aliases for use in endpoints
-RedisDep = Annotated[Redis[Any], Depends(get_redis_client)]
+RedisDep = Annotated[Redis, Depends(get_redis_client)]
 VaultDep = Annotated[VaultManagerAsync, Depends(get_vault_client)]

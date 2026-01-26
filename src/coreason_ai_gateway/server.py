@@ -112,7 +112,7 @@ async def chat_completions(
     request: Request,
     body: ChatCompletionRequest,
     background_tasks: BackgroundTasks,
-    redis_client: RedisDep,
+    redis_client: RedisDep,  # type: ignore[type-arg]
     vault_client: VaultDep,
     token: Annotated[str, Depends(verify_gateway_token)],
     x_coreason_project_id: Annotated[str, Header()],
