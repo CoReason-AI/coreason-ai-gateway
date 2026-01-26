@@ -10,7 +10,7 @@
 
 from typing import Any, List, Optional
 
-from openai.types.chat import ChatCompletionMessageParam
+from openai.types.chat import ChatCompletionMessageParam, ChatCompletionStreamOptionsParam
 from pydantic import BaseModel, Field
 
 
@@ -30,6 +30,9 @@ class ChatCompletionRequest(BaseModel):
     )
     n: Optional[int] = Field(1, description="How many chat completion choices to generate for each input message.")
     stream: Optional[bool] = Field(False, description="If set, partial message deltas will be sent.")
+    stream_options: Optional[ChatCompletionStreamOptionsParam] = Field(
+        None, description="Options for streaming response, e.g. include_usage."
+    )
     stop: Optional[str | List[str]] = Field(
         None, description="Up to 4 sequences where the API will stop generating further tokens."
     )
