@@ -25,6 +25,8 @@ from fastapi.responses import StreamingResponse
 from openai import (
     APIConnectionError,
     AsyncOpenAI,
+    AuthenticationError,
+    BadRequestError,
     InternalServerError,
     RateLimitError,
 )
@@ -162,6 +164,13 @@ async def chat_completions(
     except RateLimitError as e:
         await client.close()
         raise HTTPException(status_code=429, detail="Upstream provider rate limit exceeded") from e
+    except BadRequestError as e:
+        await client.close()
+        raise HTTPException(status_code=400, detail=f"Upstream provider rejected request: {str(e)}") from e
+    except AuthenticationError as e:
+        await client.close()
+        logger.error(f"Upstream authentication failed for {provider_path}: {str(e)}")
+        raise HTTPException(status_code=502, detail="Upstream authentication failed") from e
     except (APIConnectionError, InternalServerError) as e:
         await client.close()
         raise HTTPException(status_code=502, detail=f"Upstream provider error: {str(e)}") from e
