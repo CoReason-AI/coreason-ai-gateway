@@ -125,86 +125,99 @@ async def chat_completions(
     """
     settings = get_settings()
 
-    # 1. Budget Check (Fail Fast)
-    estimated_tokens = estimate_tokens(body.messages)
-    await check_budget(x_coreason_project_id, estimated_tokens, redis_client)
+    context = {}
+    if x_coreason_trace_id:
+        context["trace_id"] = x_coreason_trace_id
 
-    # 2. Secret Retrieval (JIT)
-    provider_path = resolve_provider_path(body.model)
-    try:
-        # According to TRD: secret/infrastructure/{provider}
-        secret_path = f"secret/{provider_path}"
-        secret_data = await vault_client.get_secret(secret_path)
-    except Exception as e:
-        logger.exception(f"Vault secret retrieval failed for {provider_path}")
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Security subsystem unavailable",
-        ) from e
+    with logger.contextualize(**context):
+        # 1. Budget Check (Fail Fast)
+        estimated_tokens = estimate_tokens(body.messages)
+        await check_budget(x_coreason_project_id, estimated_tokens, redis_client)
 
-    if not secret_data or "api_key" not in secret_data:
-        logger.error(f"Invalid secret structure for {provider_path}")
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Security subsystem unavailable",
-        )
+        # 2. Secret Retrieval (JIT)
+        provider_path = resolve_provider_path(body.model)
+        try:
+            # According to TRD: secret/infrastructure/{provider}
+            secret_path = f"secret/{provider_path}"
+            secret_data = await vault_client.get_secret(secret_path)
+        except Exception as e:
+            logger.exception(f"Vault secret retrieval failed for {provider_path}")
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Security subsystem unavailable",
+            ) from e
 
-    api_key = secret_data["api_key"]
+        if not secret_data or "api_key" not in secret_data:
+            logger.error(f"Invalid secret structure for {provider_path}")
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Security subsystem unavailable",
+            )
 
-    # 3. Client Instantiation & Upstream Execution
-    client = AsyncOpenAI(api_key=api_key)
+        api_key = secret_data["api_key"]
 
-    try:
-        # Prepare arguments
-        kwargs = body.model_dump(exclude_unset=True)
+        # 3. Client Instantiation & Upstream Execution
+        client = AsyncOpenAI(api_key=api_key)
 
-        async for attempt in AsyncRetrying(
-            stop=(
-                stop_after_attempt(settings.RETRY_STOP_AFTER_ATTEMPT)
-                | stop_after_delay(settings.RETRY_STOP_AFTER_DELAY)
-            ),
-            wait=wait_exponential(multiplier=1, min=settings.RETRY_WAIT_MIN, max=settings.RETRY_WAIT_MAX),
-            retry=retry_if_exception_type((RateLimitError, APIConnectionError, InternalServerError)),
-            reraise=True,
-        ):
-            with attempt:
-                response = await client.chat.completions.create(**kwargs)
+        try:
+            # Prepare arguments
+            kwargs = body.model_dump(exclude_unset=True)
 
-    except Exception as e:
-        # Exceptions are now handled by global exception handlers.
-        # However, we must ensure client is closed.
-        await client.close()
-        # If it's not one of our handled types, we might want to log it or let it bubble up.
-        # But if we let it bubble up, FastAPI catches it as 500 if unhandled.
-        # Our exception handlers cover OpenAI errors. Generic Exception is not covered.
-        # So we should probably re-raise or handle as 500 explicitly if we want custom logging.
-        # But we also have retry logic which catches exceptions.
-        # Wait, tenacity re-raises.
-        raise e
+            async for attempt in AsyncRetrying(
+                stop=(
+                    stop_after_attempt(settings.RETRY_STOP_AFTER_ATTEMPT)
+                    | stop_after_delay(settings.RETRY_STOP_AFTER_DELAY)
+                ),
+                wait=wait_exponential(multiplier=1, min=settings.RETRY_WAIT_MIN, max=settings.RETRY_WAIT_MAX),
+                retry=retry_if_exception_type((RateLimitError, APIConnectionError, InternalServerError)),
+                reraise=True,
+            ):
+                with attempt:
+                    response = await client.chat.completions.create(**kwargs)
 
-    # 4. Handle Response
-    if body.stream:
+        except Exception as e:
+            # Exceptions are now handled by global exception handlers.
+            # However, we must ensure client is closed.
+            await client.close()
+            # If it's not one of our handled types, we might want to log it or let it bubble up.
+            # But if we let it bubble up, FastAPI catches it as 500 if unhandled.
+            # Our exception handlers cover OpenAI errors. Generic Exception is not covered.
+            # So we should probably re-raise or handle as 500 explicitly if we want custom logging.
+            # But we also have retry logic which catches exceptions.
+            # Wait, tenacity re-raises.
+            raise e
 
-        async def stream_generator() -> AsyncIterator[str]:
-            usage = None
-            try:
-                # response is an AsyncStream
-                async for chunk in response:
-                    # Capture usage if available (OpenAI stream_options)
-                    if hasattr(chunk, "usage") and chunk.usage:
-                        usage = chunk.usage
+        # 4. Handle Response
+        if body.stream:
 
-                    yield f"data: {chunk.model_dump_json()}\n\n"
-                yield "data: [DONE]\n\n"
-            finally:
-                await client.close()
-                if usage:
-                    await record_usage(x_coreason_project_id, usage, redis_client)
+            async def stream_generator() -> AsyncIterator[str]:
+                # Re-apply logger context for the stream generator duration
+                with logger.contextualize(**context):
+                    usage = None
+                    try:
+                        # response is an AsyncStream
+                        async for chunk in response:
+                            # Capture usage if available (OpenAI stream_options)
+                            if hasattr(chunk, "usage") and chunk.usage:
+                                usage = chunk.usage
 
-        return StreamingResponse(stream_generator(), media_type="text/event-stream")
+                            yield f"data: {chunk.model_dump_json()}\n\n"
+                        yield "data: [DONE]\n\n"
+                    finally:
+                        await client.close()
+                        if usage:
+                            await record_usage(x_coreason_project_id, usage, redis_client, trace_id=x_coreason_trace_id)
 
-    else:
-        # response is ChatCompletion
-        await client.close()
-        background_tasks.add_task(record_usage, x_coreason_project_id, response.usage, redis_client)
-        return response
+            return StreamingResponse(stream_generator(), media_type="text/event-stream")
+
+        else:
+            # response is ChatCompletion
+            await client.close()
+            background_tasks.add_task(
+                record_usage,
+                x_coreason_project_id,
+                response.usage,
+                redis_client,
+                trace_id=x_coreason_trace_id,
+            )
+            return response

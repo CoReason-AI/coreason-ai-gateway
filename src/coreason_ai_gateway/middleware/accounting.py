@@ -22,6 +22,7 @@ async def record_usage(
     project_id: str,
     usage: CompletionUsage | None,
     redis_client: Redis[Any],
+    trace_id: str | None = None,
 ) -> None:
     """
     Records the token usage in Redis asynchronously.
@@ -31,21 +32,27 @@ async def record_usage(
         project_id: The Project ID associated with the request.
         usage: The usage statistics from the OpenAI response.
         redis_client: The Async Redis client.
+        trace_id: Optional trace ID for distributed tracing logs.
     """
-    if not usage:
-        logger.warning(f"No usage data provided for Project ID {project_id}")
-        return
+    context = {}
+    if trace_id:
+        context["trace_id"] = trace_id
 
-    total_tokens = usage.total_tokens
-    if total_tokens <= 0:
-        return
+    with logger.contextualize(**context):
+        if not usage:
+            logger.warning(f"No usage data provided for Project ID {project_id}")
+            return
 
-    logger.info(f"Recording usage for Project ID {project_id}: {total_tokens} tokens")
+        total_tokens = usage.total_tokens
+        if total_tokens <= 0:
+            return
 
-    try:
-        async with redis_client.pipeline() as pipe:
-            pipe.decrby(f"budget:{project_id}:remaining", total_tokens)
-            pipe.incrby(f"usage:{project_id}:total", total_tokens)
-            await pipe.execute()
-    except Exception:
-        logger.exception(f"Failed to record usage for Project ID {project_id}")
+        logger.info(f"Recording usage for Project ID {project_id}: {total_tokens} tokens")
+
+        try:
+            async with redis_client.pipeline() as pipe:
+                pipe.decrby(f"budget:{project_id}:remaining", total_tokens)
+                pipe.incrby(f"usage:{project_id}:total", total_tokens)
+                await pipe.execute()
+        except Exception:
+            logger.exception(f"Failed to record usage for Project ID {project_id}")
