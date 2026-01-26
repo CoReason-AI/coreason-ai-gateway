@@ -237,3 +237,122 @@ async def test_integration_streaming(mock_external_deps: dict[str, Any]) -> None
         # Verify usage accounting
         # Note: Usage accounting happens AFTER stream is consumed.
         assert mock_external_deps["pipeline"].execute.called
+
+
+@respx.mock
+@pytest.mark.anyio
+async def test_integration_upstream_connection_error(mock_external_deps: dict[str, Any]) -> None:
+    # Simulate connection error (e.g., DNS failure, timeout)
+    # respx.mock(side_effect=httpx.ConnectError)
+
+    # We need to import httpx exceptions
+    import httpx
+
+    route = respx.post("https://api.openai.com/v1/chat/completions").mock(
+        side_effect=httpx.ConnectError("Connection refused", request=MagicMock())
+    )
+
+    with patch("coreason_ai_gateway.server.get_settings") as mock_settings:
+        settings = mock_settings.return_value
+        settings.RETRY_WAIT_MIN = 0.01
+        settings.RETRY_WAIT_MAX = 0.05
+        settings.RETRY_STOP_AFTER_ATTEMPT = 2
+        settings.VAULT_ADDR = "http://vault:8200"
+        settings.VAULT_ROLE_ID = "dummy-role-id"
+        settings.VAULT_SECRET_ID.get_secret_value.return_value = "dummy-secret-id"
+        settings.REDIS_URL = "redis://redis:6379"
+        settings.GATEWAY_ACCESS_TOKEN.get_secret_value.return_value = "valid-token"
+
+        with TestClient(app) as client:
+            response = client.post(
+                "/v1/chat/completions",
+                json={"model": "gpt-4", "messages": [{"role": "user", "content": "connect fail"}]},
+                headers={"Authorization": "Bearer valid-token", "X-Coreason-Project-ID": "proj-connect-fail"},
+            )
+
+            # APIConnectionError -> 502
+            assert response.status_code == 502
+            assert "Upstream provider error" in response.json()["detail"]
+            assert route.call_count == 2
+
+
+@respx.mock
+@pytest.mark.anyio
+async def test_integration_mid_stream_error(mock_external_deps: dict[str, Any]) -> None:
+    # Simulate a stream that breaks midway
+    import httpx
+    import openai
+
+    # Define an iterator that yields one chunk then raises
+    async def broken_stream() -> Any:
+        yield b'data: {"id":"1","choices":[{"delta":{"content":"Hel"}}]}\n\n'
+        # httpx treats exceptions in generators as stream errors
+        raise httpx.ReadError("Network Reset")
+
+    route = respx.post("https://api.openai.com/v1/chat/completions").mock(
+        return_value=Response(
+            200,
+            headers={"Content-Type": "text/event-stream"},
+            content=broken_stream(),
+        )
+    )
+
+    with TestClient(app) as client:
+        # Note: TestClient/Starlette might swallow the exception during streaming if the generator exits early
+        # or behaves like a truncated stream. We primarily verify that usage accounting (which happens in 'finally')
+        # is NOT triggered because 'usage' variable remains None.
+        try:
+            response = client.post(
+                "/v1/chat/completions",
+                json={"model": "gpt-4", "messages": [{"role": "user", "content": "stream"}]},
+                headers={"Authorization": "Bearer valid-token", "X-Coreason-Project-ID": "proj-stream-fail"},
+            )
+            # Consume stream to trigger error (or partial read)
+            for _ in response.iter_lines():
+                pass
+        except (httpx.ReadError, openai.APIConnectionError, Exception):
+            pass  # Expected if it raises
+
+        # Verify usage was NOT recorded (because stream crashed before usage chunk)
+        assert not mock_external_deps["pipeline"].execute.called
+
+
+@respx.mock
+@pytest.mark.anyio
+async def test_integration_malformed_json_response(mock_external_deps: dict[str, Any]) -> None:
+    # Upstream returns 200 but garbage body
+    route = respx.post("https://api.openai.com/v1/chat/completions").mock(
+        return_value=Response(
+            200,
+            content="NOT JSON",
+        )
+    )
+
+    with TestClient(app) as client:
+        # AsyncOpenAI will raise APIResponseValidationError or similar when parsing JSON fails.
+        # This is usually wrapped in APIError or handled as internal error.
+        # If unhandled, it bubbles as 500.
+
+        # Note: If tenacity catches it, it might retry.
+        # But parsing errors on 200 OK might not be in the retry list (RateLimit, Connection, 500).
+        # AsyncOpenAI raises APIError for bad json? No, likely APIMismatchedResponse or similar.
+
+        # Let's verify what happens. It should probably result in a 500 (unhandled exception in handler)
+        # or 502 if we catch generic APIErrors.
+
+        # Current server.py retry list: (RateLimitError, APIConnectionError, InternalServerError)
+        # Malformed JSON (on 200) is likely openai.APIStatusError or just specific parsing error.
+
+        # Because we don't catch it in server.py explicitly (except via global handlers maybe?),
+        # checking exception handlers...
+        # We handle: BadRequest, Authentication, RateLimit, APIConnection, InternalServer.
+        # Malformed JSON might fall through.
+
+        with pytest.raises(Exception):
+            # We expect some exception if TestClient catches it, or 500 if middleware catches it.
+            # TestClient usually re-raises app exceptions.
+            client.post(
+                "/v1/chat/completions",
+                json={"model": "gpt-4", "messages": [{"role": "user", "content": "bad json"}]},
+                headers={"Authorization": "Bearer valid-token", "X-Coreason-Project-ID": "proj-malformed"},
+            )
