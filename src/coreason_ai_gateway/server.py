@@ -33,6 +33,7 @@ from tenacity import (
     AsyncRetrying,
     retry_if_exception_type,
     stop_after_attempt,
+    stop_after_delay,
     wait_exponential,
 )
 
@@ -158,7 +159,10 @@ async def chat_completions(
         kwargs = body.model_dump(exclude_unset=True)
 
         async for attempt in AsyncRetrying(
-            stop=stop_after_attempt(settings.RETRY_STOP_AFTER_ATTEMPT),
+            stop=(
+                stop_after_attempt(settings.RETRY_STOP_AFTER_ATTEMPT)
+                | stop_after_delay(settings.RETRY_STOP_AFTER_DELAY)
+            ),
             wait=wait_exponential(multiplier=1, min=settings.RETRY_WAIT_MIN, max=settings.RETRY_WAIT_MAX),
             retry=retry_if_exception_type((RateLimitError, APIConnectionError, InternalServerError)),
             reraise=True,
