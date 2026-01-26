@@ -8,6 +8,8 @@
 #
 # Source Code: https://github.com/CoReason-AI/coreason_ai_gateway
 
+from __future__ import annotations
+
 import json
 from typing import Any
 
