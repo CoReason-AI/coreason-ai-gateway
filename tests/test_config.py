@@ -31,6 +31,10 @@ def test_settings_valid_config(valid_env: None) -> None:
     assert str(settings.REDIS_URL) == "redis://redis:6379"
     assert settings.GATEWAY_ACCESS_TOKEN.get_secret_value() == "s3cr3t"
 
+    # Verify Retry Defaults (BRD Requirement: 3 attempts or 10 seconds)
+    assert settings.RETRY_STOP_AFTER_ATTEMPT == 3
+    assert settings.RETRY_STOP_AFTER_DELAY == 10
+
 
 def test_settings_missing_config(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("VAULT_ADDR", raising=False)
