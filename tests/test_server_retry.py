@@ -13,7 +13,13 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
-from openai import RateLimitError
+from openai import (
+    APIConnectionError,
+    AuthenticationError,
+    BadRequestError,
+    InternalServerError,
+    RateLimitError,
+)
 
 from coreason_ai_gateway.server import app
 
@@ -67,23 +73,11 @@ def mock_dependencies() -> Generator[dict[str, Any], None, None]:
 
 
 def test_retry_stops_after_delay(mock_dependencies: dict[str, Any]) -> None:
-    # We set RETRY_STOP_AFTER_DELAY to 2 seconds.
-    # We will mock the client.chat.completions.create to raise RateLimitError always.
-    # And we will verify it stops.
-    # To properly test the delay without waiting, we might need to mock time,
-    # but tenacity uses time.monotonic.
-    # A simpler integration-style test with short delay is acceptable here since it's "2 seconds".
-
-    # However, to be faster and more deterministic, we can mock time.
-    # But patching time.monotonic in tenacity is tricky across modules.
-    # Since we set delay to 2s, we can just run it. It's a bit slow for a unit test but robust.
-
     mock_dependencies["client"].chat.completions.create.side_effect = RateLimitError(
         message="Rate limit", response=MagicMock(), body={}
     )
 
     with TestClient(app) as client:
-        # Start timer
         import time
 
         start = time.time()
@@ -94,21 +88,14 @@ def test_retry_stops_after_delay(mock_dependencies: dict[str, Any]) -> None:
         )
         end = time.time()
 
-        # It should return 429 (handled by exception handler) after retries are exhausted.
-        # But wait, does it return 429?
-        # If AsyncRetrying re-raises, it bubbles up.
-        # Then exception handlers catch RateLimitError and return 429.
         assert response.status_code == 429
         duration = end - start
-        # Should be at least 2 seconds (the delay config).
-        # And it should not have tried too many times if the wait is exponential.
         assert duration >= 2.0
 
 
 def test_retry_stops_after_attempts_if_faster(
     mock_dependencies: dict[str, Any], monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # Set delay to be long, but attempts to be short.
     monkeypatch.setenv("RETRY_STOP_AFTER_ATTEMPT", "2")
     monkeypatch.setenv("RETRY_STOP_AFTER_DELAY", "100")
 
@@ -123,6 +110,86 @@ def test_retry_stops_after_attempts_if_faster(
             headers={"Authorization": "Bearer valid-token", "X-Coreason-Project-ID": "proj-1"},
         )
         assert response.status_code == 429
-        # Should have called exactly 2 times (initial + 1 retry? Or 2 attempts total?)
-        # stop_after_attempt(2) means 2 attempts total.
+        assert mock_dependencies["client"].chat.completions.create.call_count == 2
+
+
+def test_no_retry_on_non_retriable_error(mock_dependencies: dict[str, Any]) -> None:
+    # AuthenticationError should not trigger retry
+    mock_dependencies["client"].chat.completions.create.side_effect = AuthenticationError(
+        message="Auth failed", response=MagicMock(), body={}
+    )
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/v1/chat/completions",
+            json={"model": "gpt-4", "messages": [{"role": "user", "content": "hello"}]},
+            headers={"Authorization": "Bearer valid-token", "X-Coreason-Project-ID": "proj-1"},
+        )
+        # Should be 502 per exception handlers (AuthenticationError -> upstream_authentication_handler -> 502)
+        assert response.status_code == 502
+        assert mock_dependencies["client"].chat.completions.create.call_count == 1
+
+
+def test_no_retry_on_bad_request(mock_dependencies: dict[str, Any]) -> None:
+    # BadRequestError should not trigger retry
+    mock_dependencies["client"].chat.completions.create.side_effect = BadRequestError(
+        message="Bad Request", response=MagicMock(), body={}
+    )
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/v1/chat/completions",
+            json={"model": "gpt-4", "messages": [{"role": "user", "content": "hello"}]},
+            headers={"Authorization": "Bearer valid-token", "X-Coreason-Project-ID": "proj-1"},
+        )
+        # Should be 400 per exception handlers
+        assert response.status_code == 400
+        assert mock_dependencies["client"].chat.completions.create.call_count == 1
+
+
+def test_mixed_failures_eventually_succeed(mock_dependencies: dict[str, Any], monkeypatch: pytest.MonkeyPatch) -> None:
+    # Allow enough time for retries (default fixture has 2s delay, min wait is 2s)
+    monkeypatch.setenv("RETRY_STOP_AFTER_DELAY", "20")
+
+    # First call: RateLimit (should retry)
+    # Second call: InternalServerError (should retry)
+    # Third call: Success
+    mock_response = MagicMock()
+    mock_response.usage.total_tokens = 10
+    mock_response.model_dump.return_value = {"id": "123", "choices": []}
+
+    mock_dependencies["client"].chat.completions.create.side_effect = [
+        RateLimitError(message="Rate limit", response=MagicMock(), body={}),
+        InternalServerError(message="Server Error", response=MagicMock(), body={}),
+        mock_response,
+    ]
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/v1/chat/completions",
+            json={"model": "gpt-4", "messages": [{"role": "user", "content": "hello"}]},
+            headers={"Authorization": "Bearer valid-token", "X-Coreason-Project-ID": "proj-1"},
+        )
+        assert response.status_code == 200
+        assert mock_dependencies["client"].chat.completions.create.call_count == 3
+
+
+def test_mixed_failures_exceed_attempts(mock_dependencies: dict[str, Any], monkeypatch: pytest.MonkeyPatch) -> None:
+    # Set attempts to 2
+    monkeypatch.setenv("RETRY_STOP_AFTER_ATTEMPT", "2")
+
+    # Fail twice with retriable errors
+    mock_dependencies["client"].chat.completions.create.side_effect = [
+        APIConnectionError(message="Conn Error", request=MagicMock()),
+        InternalServerError(message="Server Error", response=MagicMock(), body={}),
+    ]
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/v1/chat/completions",
+            json={"model": "gpt-4", "messages": [{"role": "user", "content": "hello"}]},
+            headers={"Authorization": "Bearer valid-token", "X-Coreason-Project-ID": "proj-1"},
+        )
+        # Should fail with 502 (mapped from InternalServerError)
+        assert response.status_code == 502
         assert mock_dependencies["client"].chat.completions.create.call_count == 2
