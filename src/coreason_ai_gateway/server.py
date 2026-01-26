@@ -9,13 +9,39 @@
 # Source Code: https://github.com/CoReason-AI/coreason_ai_gateway
 
 from contextlib import asynccontextmanager
-from typing import AsyncIterator
+from typing import Annotated, Any, AsyncIterator
 
 from coreason_vault import CoreasonVaultConfig, VaultManagerAsync
-from fastapi import FastAPI
+from fastapi import (
+    BackgroundTasks,
+    Depends,
+    FastAPI,
+    Header,
+    HTTPException,
+    Request,
+    status,
+)
+from fastapi.responses import StreamingResponse
+from openai import (
+    APIConnectionError,
+    AsyncOpenAI,
+    InternalServerError,
+    RateLimitError,
+)
 from redis import asyncio as redis
+from tenacity import (
+    AsyncRetrying,
+    retry_if_exception_type,
+    stop_after_attempt,
+    wait_exponential,
+)
 
 from .config import get_settings
+from .middleware.accounting import record_usage
+from .middleware.auth import verify_gateway_token
+from .middleware.budget import check_budget, estimate_tokens
+from .routing import resolve_provider_path
+from .schemas import ChatCompletionRequest
 from .utils.logger import logger
 
 
@@ -76,3 +102,104 @@ async def health_check() -> dict[str, str]:
     Health check endpoint to verify service status.
     """
     return {"status": "ok"}
+
+
+@app.post("/v1/chat/completions", status_code=200)
+async def chat_completions(
+    request: Request,
+    body: ChatCompletionRequest,
+    background_tasks: BackgroundTasks,
+    token: Annotated[str, Depends(verify_gateway_token)],
+    x_coreason_project_id: Annotated[str, Header()],
+    x_coreason_trace_id: Annotated[str | None, Header()] = None,
+) -> Any:
+    """
+    Proxies chat completion requests to LLM providers.
+    Enforces authentication, budgeting, and JIT secret injection.
+    """
+    # 1. Budget Check (Fail Fast)
+    estimated_tokens = estimate_tokens(body.messages)
+    await check_budget(x_coreason_project_id, estimated_tokens, app.state.redis)
+
+    # 2. Secret Retrieval (JIT)
+    provider_path = resolve_provider_path(body.model)
+    try:
+        # According to TRD: secret/infrastructure/{provider}
+        secret_path = f"secret/{provider_path}"
+        secret_data = await app.state.vault.get_secret(secret_path)
+    except Exception as e:
+        logger.exception(f"Vault secret retrieval failed for {provider_path}")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Security subsystem unavailable",
+        ) from e
+
+    if not secret_data or "api_key" not in secret_data:
+        logger.error(f"Invalid secret structure for {provider_path}")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Security subsystem unavailable",
+        )
+
+    api_key = secret_data["api_key"]
+
+    # 3. Client Instantiation & Upstream Execution
+    client = AsyncOpenAI(api_key=api_key)
+
+    try:
+        # Prepare arguments
+        kwargs = body.model_dump(exclude_unset=True)
+
+        async for attempt in AsyncRetrying(
+            stop=stop_after_attempt(3),
+            wait=wait_exponential(multiplier=1, min=2, max=10),
+            retry=retry_if_exception_type((RateLimitError, APIConnectionError, InternalServerError)),
+            reraise=True,
+        ):
+            with attempt:
+                response = await client.chat.completions.create(**kwargs)
+
+    except RateLimitError as e:
+        await client.close()
+        raise HTTPException(status_code=429, detail="Upstream provider rate limit exceeded") from e
+    except (APIConnectionError, InternalServerError) as e:
+        await client.close()
+        raise HTTPException(status_code=502, detail=f"Upstream provider error: {str(e)}") from e
+    except Exception as e:
+        await client.close()
+        logger.exception("Unexpected upstream error")
+        raise HTTPException(status_code=502, detail="Upstream provider error") from e
+
+    # 4. Handle Response
+    if body.stream:
+
+        async def stream_generator() -> AsyncIterator[str]:
+            usage = None
+            try:
+                # response is an AsyncStream
+                async for chunk in response:
+                    # Capture usage if available (OpenAI stream_options)
+                    if hasattr(chunk, "usage") and chunk.usage:
+                        usage = chunk.usage
+
+                    yield f"data: {chunk.model_dump_json()}\n\n"
+                yield "data: [DONE]\n\n"
+            finally:
+                await client.close()
+                if usage:
+                    # We can't use background_tasks here because the response is already returned
+                    # But we can schedule it on the loop or just call it.
+                    # Since record_usage is async and we are in async generator, we can await it.
+                    # But ideally we want to return quickly.
+                    # record_usage is fire-and-forget in accounting.py? No, it's async def.
+                    # We should await it here, or create a task.
+                    # Since we are cleaning up, awaiting is fine.
+                    await record_usage(x_coreason_project_id, usage, app.state.redis)
+
+        return StreamingResponse(stream_generator(), media_type="text/event-stream")
+
+    else:
+        # response is ChatCompletion
+        await client.close()
+        background_tasks.add_task(record_usage, x_coreason_project_id, response.usage, app.state.redis)
+        return response

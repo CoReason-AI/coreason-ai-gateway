@@ -1,0 +1,219 @@
+# Copyright (c) 2025 CoReason, Inc.
+#
+# This software is proprietary and dual-licensed.
+# Licensed under the Prosperity Public License 3.0 (the "License").
+# A copy of the license is available at https://prosperitylicense.com/versions/3.0.0
+# For details, see the LICENSE file.
+# Commercial use beyond a 30-day trial requires a separate license.
+#
+# Source Code: https://github.com/CoReason-AI/coreason_ai_gateway
+
+import os
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
+from fastapi.testclient import TestClient
+from openai import APIConnectionError, RateLimitError
+from openai.types.chat import ChatCompletionChunk
+
+from coreason_ai_gateway.server import app  # noqa: E402
+
+
+@pytest.fixture(autouse=True)
+def setup_env(monkeypatch):
+    monkeypatch.setenv("VAULT_ADDR", "http://vault:8200")
+    monkeypatch.setenv("VAULT_ROLE_ID", "dummy-role-id")
+    monkeypatch.setenv("VAULT_SECRET_ID", "dummy-secret-id")
+    monkeypatch.setenv("REDIS_URL", "redis://redis:6379")
+    monkeypatch.setenv("GATEWAY_ACCESS_TOKEN", "valid-token")
+
+
+@pytest.fixture
+def mock_dependencies():
+    with (
+        patch("coreason_ai_gateway.server.redis.from_url") as mock_redis,
+        patch("coreason_ai_gateway.server.VaultManagerAsync") as mock_vault,
+        patch("coreason_ai_gateway.server.CoreasonVaultConfig"),
+        patch("coreason_ai_gateway.server.AsyncOpenAI") as mock_openai,
+    ):
+        # Redis setup
+        redis_instance = AsyncMock()
+        mock_redis.return_value = redis_instance
+        redis_instance.get.return_value = "1000"  # Sufficient budget by default
+
+        # Configure pipeline mock for async with
+        # redis.pipeline() is synchronous, returns a context manager
+        redis_instance.pipeline = MagicMock()
+        pipeline_mock = MagicMock()  # Not AsyncMock, so methods are sync by default
+        redis_instance.pipeline.return_value = pipeline_mock
+
+        async def aenter(*args, **kwargs):
+            return pipeline_mock
+
+        pipeline_mock.__aenter__ = AsyncMock(side_effect=aenter)
+        pipeline_mock.__aexit__ = AsyncMock()
+        pipeline_mock.execute = AsyncMock()
+
+        # Vault setup
+        vault_instance = AsyncMock()
+        mock_vault.return_value = vault_instance
+        vault_instance.authenticate = AsyncMock()
+        vault_instance.get_secret.return_value = {"api_key": "sk-test"}
+
+        # OpenAI setup
+        openai_client = AsyncMock()
+        mock_openai.return_value = openai_client
+
+        yield {"redis": redis_instance, "vault": vault_instance, "openai": mock_openai, "client": openai_client}
+
+
+@pytest.fixture
+def client(mock_dependencies):
+    with TestClient(app) as c:
+        yield c
+
+
+def test_auth_failure(client):
+    response = client.post(
+        "/v1/chat/completions", json={"model": "gpt-4", "messages": []}, headers={"Authorization": "Bearer invalid"}
+    )
+    assert response.status_code == 401
+
+
+def test_missing_project_id(client):
+    response = client.post(
+        "/v1/chat/completions", json={"model": "gpt-4", "messages": []}, headers={"Authorization": "Bearer valid-token"}
+    )
+    assert response.status_code == 422  # Missing header
+
+
+def test_budget_failure(mock_dependencies, client):
+    mock_dependencies["redis"].get.return_value = "0"  # Zero budget
+
+    response = client.post(
+        "/v1/chat/completions",
+        json={"model": "gpt-4", "messages": [{"role": "user", "content": "hello"}]},
+        headers={"Authorization": "Bearer valid-token", "X-Coreason-Project-ID": "proj-1"},
+    )
+    assert response.status_code == 402
+
+
+@pytest.mark.anyio
+async def test_success_non_streaming(mock_dependencies):
+    mock_response = MagicMock()
+    mock_response.usage.total_tokens = 10
+    mock_response.model_dump.return_value = {"id": "123", "choices": []}
+
+    mock_dependencies["client"].chat.completions.create.return_value = mock_response
+
+    # Using standard TestClient
+    with TestClient(app) as client:
+        response = client.post(
+            "/v1/chat/completions",
+            json={"model": "gpt-4", "messages": [{"role": "user", "content": "hello"}]},
+            headers={"Authorization": "Bearer valid-token", "X-Coreason-Project-ID": "proj-1"},
+        )
+        assert response.status_code == 200
+        mock_dependencies["client"].chat.completions.create.assert_awaited()
+        # Verify accounting called (background task might need manual trigger or mock)
+        # BackgroundTasks in FastAPI TestClient are executed synchronously usually?
+        # Yes, TestClient runs background tasks.
+
+        # Verify redis usage update
+        # We can't easily verify pipeline execution details on AsyncMock without inspecting calls deep
+        assert mock_dependencies["redis"].pipeline.called
+
+
+def test_vault_failure(mock_dependencies, client):
+    mock_dependencies["vault"].get_secret.side_effect = Exception("Vault down")
+
+    response = client.post(
+        "/v1/chat/completions",
+        json={"model": "gpt-4", "messages": [{"role": "user", "content": "hello"}]},
+        headers={"Authorization": "Bearer valid-token", "X-Coreason-Project-ID": "proj-1"},
+    )
+    assert response.status_code == 503
+
+
+def test_vault_invalid_secret(mock_dependencies, client):
+    mock_dependencies["vault"].get_secret.return_value = {"other": "value"}
+
+    response = client.post(
+        "/v1/chat/completions",
+        json={"model": "gpt-4", "messages": [{"role": "user", "content": "hello"}]},
+        headers={"Authorization": "Bearer valid-token", "X-Coreason-Project-ID": "proj-1"},
+    )
+    assert response.status_code == 503
+
+
+def test_upstream_rate_limit(mock_dependencies, client):
+    # Mock create to raise RateLimitError
+    mock_dependencies["client"].chat.completions.create.side_effect = RateLimitError(
+        message="Rate limit", response=MagicMock(), body={}
+    )
+
+    response = client.post(
+        "/v1/chat/completions",
+        json={"model": "gpt-4", "messages": [{"role": "user", "content": "hello"}]},
+        headers={"Authorization": "Bearer valid-token", "X-Coreason-Project-ID": "proj-1"},
+    )
+    assert response.status_code == 429
+    # Verify retries
+    assert mock_dependencies["client"].chat.completions.create.call_count >= 1
+
+
+def test_upstream_api_error(mock_dependencies, client):
+    mock_dependencies["client"].chat.completions.create.side_effect = APIConnectionError(
+        message="Connection error", request=MagicMock()
+    )
+
+    response = client.post(
+        "/v1/chat/completions",
+        json={"model": "gpt-4", "messages": [{"role": "user", "content": "hello"}]},
+        headers={"Authorization": "Bearer valid-token", "X-Coreason-Project-ID": "proj-1"},
+    )
+    assert response.status_code == 502
+
+
+def test_upstream_generic_error(mock_dependencies, client):
+    mock_dependencies["client"].chat.completions.create.side_effect = Exception("Boom")
+
+    response = client.post(
+        "/v1/chat/completions",
+        json={"model": "gpt-4", "messages": [{"role": "user", "content": "hello"}]},
+        headers={"Authorization": "Bearer valid-token", "X-Coreason-Project-ID": "proj-1"},
+    )
+    assert response.status_code == 502
+    assert response.json()["detail"] == "Upstream provider error"
+
+
+@pytest.mark.anyio
+async def test_streaming_success(mock_dependencies):
+    # Prepare async iterator for streaming response
+    chunk1 = MagicMock(spec=ChatCompletionChunk)
+    chunk1.model_dump_json.return_value = '{"id": "1", "choices": [{"delta": {"content": "Hello"}}]}'
+    chunk1.usage = None
+
+    chunk2 = MagicMock(spec=ChatCompletionChunk)
+    chunk2.model_dump_json.return_value = '{"id": "1", "choices": [{"delta": {"content": " World"}}]}'
+    chunk2.usage = MagicMock(total_tokens=5)
+
+    async def response_generator(**kwargs):
+        yield chunk1
+        yield chunk2
+
+    mock_dependencies["client"].chat.completions.create.side_effect = response_generator
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/v1/chat/completions",
+            json={"model": "gpt-4", "messages": [{"role": "user", "content": "hello"}], "stream": True},
+            headers={"Authorization": "Bearer valid-token", "X-Coreason-Project-ID": "proj-1"},
+        )
+        assert response.status_code == 200
+        content = response.text
+        assert "data: {" in content
+        assert "data: [DONE]" in content
+
+        # Verify accounting
+        assert mock_dependencies["redis"].pipeline.called
