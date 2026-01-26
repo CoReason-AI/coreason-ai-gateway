@@ -8,7 +8,7 @@
 #
 # Source Code: https://github.com/CoReason-AI/coreason_ai_gateway
 
-import os
+from typing import Any, AsyncGenerator, Generator
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -20,7 +20,7 @@ from coreason_ai_gateway.server import app  # noqa: E402
 
 
 @pytest.fixture(autouse=True)
-def setup_env(monkeypatch):
+def setup_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("VAULT_ADDR", "http://vault:8200")
     monkeypatch.setenv("VAULT_ROLE_ID", "dummy-role-id")
     monkeypatch.setenv("VAULT_SECRET_ID", "dummy-secret-id")
@@ -29,7 +29,7 @@ def setup_env(monkeypatch):
 
 
 @pytest.fixture
-def mock_dependencies():
+def mock_dependencies() -> Generator[dict[str, Any], None, None]:
     with (
         patch("coreason_ai_gateway.server.redis.from_url") as mock_redis,
         patch("coreason_ai_gateway.server.VaultManagerAsync") as mock_vault,
@@ -47,7 +47,7 @@ def mock_dependencies():
         pipeline_mock = MagicMock()  # Not AsyncMock, so methods are sync by default
         redis_instance.pipeline.return_value = pipeline_mock
 
-        async def aenter(*args, **kwargs):
+        async def aenter(*args: Any, **kwargs: Any) -> MagicMock:
             return pipeline_mock
 
         pipeline_mock.__aenter__ = AsyncMock(side_effect=aenter)
@@ -68,26 +68,26 @@ def mock_dependencies():
 
 
 @pytest.fixture
-def client(mock_dependencies):
+def client(mock_dependencies: dict[str, Any]) -> Generator[TestClient, None, None]:
     with TestClient(app) as c:
         yield c
 
 
-def test_auth_failure(client):
+def test_auth_failure(client: TestClient) -> None:
     response = client.post(
         "/v1/chat/completions", json={"model": "gpt-4", "messages": []}, headers={"Authorization": "Bearer invalid"}
     )
     assert response.status_code == 401
 
 
-def test_missing_project_id(client):
+def test_missing_project_id(client: TestClient) -> None:
     response = client.post(
         "/v1/chat/completions", json={"model": "gpt-4", "messages": []}, headers={"Authorization": "Bearer valid-token"}
     )
     assert response.status_code == 422  # Missing header
 
 
-def test_budget_failure(mock_dependencies, client):
+def test_budget_failure(mock_dependencies: dict[str, Any], client: TestClient) -> None:
     mock_dependencies["redis"].get.return_value = "0"  # Zero budget
 
     response = client.post(
@@ -99,7 +99,7 @@ def test_budget_failure(mock_dependencies, client):
 
 
 @pytest.mark.anyio
-async def test_success_non_streaming(mock_dependencies):
+async def test_success_non_streaming(mock_dependencies: dict[str, Any]) -> None:
     mock_response = MagicMock()
     mock_response.usage.total_tokens = 10
     mock_response.model_dump.return_value = {"id": "123", "choices": []}
@@ -124,7 +124,7 @@ async def test_success_non_streaming(mock_dependencies):
         assert mock_dependencies["redis"].pipeline.called
 
 
-def test_vault_failure(mock_dependencies, client):
+def test_vault_failure(mock_dependencies: dict[str, Any], client: TestClient) -> None:
     mock_dependencies["vault"].get_secret.side_effect = Exception("Vault down")
 
     response = client.post(
@@ -135,7 +135,7 @@ def test_vault_failure(mock_dependencies, client):
     assert response.status_code == 503
 
 
-def test_vault_invalid_secret(mock_dependencies, client):
+def test_vault_invalid_secret(mock_dependencies: dict[str, Any], client: TestClient) -> None:
     mock_dependencies["vault"].get_secret.return_value = {"other": "value"}
 
     response = client.post(
@@ -146,7 +146,7 @@ def test_vault_invalid_secret(mock_dependencies, client):
     assert response.status_code == 503
 
 
-def test_upstream_rate_limit(mock_dependencies, client):
+def test_upstream_rate_limit(mock_dependencies: dict[str, Any], client: TestClient) -> None:
     # Mock create to raise RateLimitError
     mock_dependencies["client"].chat.completions.create.side_effect = RateLimitError(
         message="Rate limit", response=MagicMock(), body={}
@@ -162,7 +162,7 @@ def test_upstream_rate_limit(mock_dependencies, client):
     assert mock_dependencies["client"].chat.completions.create.call_count >= 1
 
 
-def test_upstream_api_error(mock_dependencies, client):
+def test_upstream_api_error(mock_dependencies: dict[str, Any], client: TestClient) -> None:
     mock_dependencies["client"].chat.completions.create.side_effect = APIConnectionError(
         message="Connection error", request=MagicMock()
     )
@@ -175,7 +175,7 @@ def test_upstream_api_error(mock_dependencies, client):
     assert response.status_code == 502
 
 
-def test_upstream_generic_error(mock_dependencies, client):
+def test_upstream_generic_error(mock_dependencies: dict[str, Any], client: TestClient) -> None:
     mock_dependencies["client"].chat.completions.create.side_effect = Exception("Boom")
 
     response = client.post(
@@ -188,7 +188,7 @@ def test_upstream_generic_error(mock_dependencies, client):
 
 
 @pytest.mark.anyio
-async def test_streaming_success(mock_dependencies):
+async def test_streaming_success(mock_dependencies: dict[str, Any]) -> None:
     # Prepare async iterator for streaming response
     chunk1 = MagicMock(spec=ChatCompletionChunk)
     chunk1.model_dump_json.return_value = '{"id": "1", "choices": [{"delta": {"content": "Hello"}}]}'
@@ -198,7 +198,7 @@ async def test_streaming_success(mock_dependencies):
     chunk2.model_dump_json.return_value = '{"id": "1", "choices": [{"delta": {"content": " World"}}]}'
     chunk2.usage = MagicMock(total_tokens=5)
 
-    async def response_generator(**kwargs):
+    async def response_generator(**kwargs: Any) -> AsyncGenerator[ChatCompletionChunk, None]:
         yield chunk1
         yield chunk2
 

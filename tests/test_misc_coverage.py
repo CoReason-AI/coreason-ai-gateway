@@ -8,18 +8,20 @@
 #
 # Source Code: https://github.com/CoReason-AI/coreason_ai_gateway
 
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from fastapi import HTTPException
+from openai.types import CompletionUsage
+
 from coreason_ai_gateway.middleware.accounting import record_usage
 from coreason_ai_gateway.middleware.auth import verify_gateway_token
 from coreason_ai_gateway.middleware.budget import check_budget, estimate_tokens
 from coreason_ai_gateway.routing import resolve_provider_path
-from fastapi import HTTPException
-from openai.types import CompletionUsage
 
 
-def test_routing_coverage():
+def test_routing_coverage() -> None:
     assert resolve_provider_path("claude-3-opus") == "infrastructure/anthropic"
 
     with pytest.raises(HTTPException) as exc:
@@ -28,7 +30,7 @@ def test_routing_coverage():
 
 
 @pytest.mark.anyio
-async def test_budget_coverage():
+async def test_budget_coverage() -> None:
     # estimate_tokens fallback
     with patch("json.dumps", side_effect=ValueError):
         assert estimate_tokens([{"role": "user", "content": "test"}]) > 0
@@ -49,7 +51,7 @@ async def test_budget_coverage():
 
 
 @pytest.mark.anyio
-async def test_auth_coverage():
+async def test_auth_coverage() -> None:
     # Missing header is handled by FastAPI Depends if not optional,
     # but verify_gateway_token takes Annotated[str | None, Header()] = None
 
@@ -67,12 +69,12 @@ async def test_auth_coverage():
 
 
 @pytest.mark.anyio
-async def test_accounting_coverage():
+async def test_accounting_coverage() -> None:
     mock_redis = AsyncMock()
     # Mock pipeline
     pipeline = MagicMock()
 
-    async def aenter(*args, **kwargs):
+    async def aenter(*args: Any, **kwargs: Any) -> MagicMock:
         return pipeline
 
     pipeline.__aenter__ = AsyncMock(side_effect=aenter)

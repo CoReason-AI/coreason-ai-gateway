@@ -12,8 +12,9 @@ import asyncio
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-from coreason_ai_gateway.middleware.accounting import record_usage
 from openai.types import CompletionUsage
+
+from coreason_ai_gateway.middleware.accounting import record_usage
 
 
 @pytest.fixture
