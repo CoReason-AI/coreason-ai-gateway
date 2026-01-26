@@ -36,6 +36,7 @@ class Settings(BaseSettings):
 
     # Resilience
     RETRY_STOP_AFTER_ATTEMPT: int = 3
+    RETRY_STOP_AFTER_DELAY: int = 10
     RETRY_WAIT_MIN: int = 2
     RETRY_WAIT_MAX: int = 10
 
