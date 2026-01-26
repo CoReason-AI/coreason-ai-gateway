@@ -191,20 +191,22 @@ async def chat_completions(
         if body.stream:
 
             async def stream_generator() -> AsyncIterator[str]:
-                usage = None
-                try:
-                    # response is an AsyncStream
-                    async for chunk in response:
-                        # Capture usage if available (OpenAI stream_options)
-                        if hasattr(chunk, "usage") and chunk.usage:
-                            usage = chunk.usage
+                # Re-apply logger context for the stream generator duration
+                with logger.contextualize(**context):
+                    usage = None
+                    try:
+                        # response is an AsyncStream
+                        async for chunk in response:
+                            # Capture usage if available (OpenAI stream_options)
+                            if hasattr(chunk, "usage") and chunk.usage:
+                                usage = chunk.usage
 
-                        yield f"data: {chunk.model_dump_json()}\n\n"
-                    yield "data: [DONE]\n\n"
-                finally:
-                    await client.close()
-                    if usage:
-                        await record_usage(x_coreason_project_id, usage, redis_client, trace_id=x_coreason_trace_id)
+                            yield f"data: {chunk.model_dump_json()}\n\n"
+                        yield "data: [DONE]\n\n"
+                    finally:
+                        await client.close()
+                        if usage:
+                            await record_usage(x_coreason_project_id, usage, redis_client, trace_id=x_coreason_trace_id)
 
             return StreamingResponse(stream_generator(), media_type="text/event-stream")
 
