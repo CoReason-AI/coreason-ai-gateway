@@ -1,0 +1,66 @@
+# Copyright (c) 2025 CoReason, Inc.
+#
+# This software is proprietary and dual-licensed.
+# Licensed under the Prosperity Public License 3.0 (the "License").
+# A copy of the license is available at https://prosperitylicense.com/versions/3.0.0
+# For details, see the LICENSE file.
+# Commercial use beyond a 30-day trial requires a separate license.
+#
+# Source Code: https://github.com/CoReason-AI/coreason_ai_gateway
+
+import json
+from typing import Any
+
+from fastapi import HTTPException, status
+from redis.asyncio import Redis
+
+
+def estimate_tokens(messages: list[dict[str, Any]]) -> int:
+    """
+    Heuristic to estimate token count: len(json.dumps(messages)) // 4.
+    """
+    try:
+        content = json.dumps(messages)
+        return len(content) // 4
+    except (TypeError, ValueError):
+        # Fallback for non-serializable objects (though Pydantic ensures structure)
+        return len(str(messages)) // 4
+
+
+async def check_budget(project_id: str, estimated_cost: int, redis_client: Redis[Any]) -> None:
+    """
+    Checks if the project has sufficient budget.
+    Raises HTTPException(402) if budget is insufficient or missing.
+
+    Args:
+        project_id: The Project ID from headers.
+        estimated_cost: The estimated token cost.
+        redis_client: The Async Redis client.
+
+    Raises:
+        HTTPException: 402 Payment Required if budget < cost.
+    """
+    key = f"budget:{project_id}:remaining"
+    remaining = await redis_client.get(key)
+
+    if remaining is None:
+        # Fail Secure: No budget key means 0 budget.
+        raise HTTPException(
+            status_code=status.HTTP_402_PAYMENT_REQUIRED,
+            detail=f"Budget exceeded for Project ID {project_id}",
+        )
+
+    try:
+        remaining_int = int(remaining)
+    except (ValueError, TypeError):
+        # Corrupted data acts as 0 budget
+        raise HTTPException(
+            status_code=status.HTTP_402_PAYMENT_REQUIRED,
+            detail=f"Budget exceeded for Project ID {project_id}",
+        ) from None
+
+    if remaining_int < estimated_cost:
+        raise HTTPException(
+            status_code=status.HTTP_402_PAYMENT_REQUIRED,
+            detail=f"Budget exceeded for Project ID {project_id}",
+        )
