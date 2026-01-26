@@ -157,7 +157,8 @@ async def chat_completions(
         api_key = secret_data["api_key"]
 
         # 3. Client Instantiation & Upstream Execution
-        client = AsyncOpenAI(api_key=api_key)
+        # Disable internal retries to let tenacity handle resilience policies
+        client = AsyncOpenAI(api_key=api_key, max_retries=0)
 
         try:
             # Prepare arguments
