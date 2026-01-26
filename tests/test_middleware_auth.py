@@ -62,3 +62,40 @@ async def test_verify_gateway_token_wrong_scheme(mock_settings: str) -> None:
         await verify_gateway_token(header)
     assert exc.value.status_code == 401
     assert exc.value.detail == "Invalid Gateway Access Token"
+
+
+@pytest.mark.anyio
+async def test_verify_gateway_token_case_insensitive_scheme(mock_settings: str) -> None:
+    token = mock_settings
+    header = f"bearer {token}"
+    result = await verify_gateway_token(header)
+    assert result == token
+
+
+@pytest.mark.anyio
+async def test_verify_gateway_token_empty_payload() -> None:
+    header = "Bearer "
+    with pytest.raises(HTTPException) as exc:
+        await verify_gateway_token(header)
+    assert exc.value.status_code == 401
+    assert exc.value.detail == "Invalid Gateway Access Token"
+
+
+@pytest.mark.anyio
+async def test_verify_gateway_token_malformed_whitespace(mock_settings: str) -> None:
+    token = mock_settings
+    # Double space should result in the token being " <token>" which fails comparison
+    header = f"Bearer  {token}"
+    with pytest.raises(HTTPException) as exc:
+        await verify_gateway_token(header)
+    assert exc.value.status_code == 401
+    assert exc.value.detail == "Invalid Gateway Access Token"
+
+
+@pytest.mark.anyio
+async def test_verify_gateway_token_no_space() -> None:
+    header = "Bearer"
+    with pytest.raises(HTTPException) as exc:
+        await verify_gateway_token(header)
+    assert exc.value.status_code == 401
+    assert exc.value.detail == "Invalid Gateway Access Token"
