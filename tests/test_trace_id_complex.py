@@ -253,7 +253,7 @@ async def test_streaming_usage_recording_with_trace_id(
         usage_chunk = MagicMock(spec=ChatCompletionChunk)
         usage_chunk.usage = MagicMock()
         usage_chunk.usage.total_tokens = 99
-        usage_chunk.model_dump_json.return_value = '' # Empty for usage chunk usually or just final
+        usage_chunk.model_dump_json.return_value = ""  # Empty for usage chunk usually or just final
         yield usage_chunk
 
     mock_dependencies["client"].chat.completions.create.side_effect = streaming_generator
