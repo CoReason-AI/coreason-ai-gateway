@@ -40,6 +40,8 @@ def get_vault_client(request: Request) -> VaultManagerAsync:
 
 
 # Type aliases for use in endpoints
+# Redis[Any] causes runtime TypeError in some envs, so we use bare Redis and suppress mypy
+
 RedisDep = Annotated[Redis[Any], Depends(get_redis_client)]
 VaultDep = Annotated[VaultManagerAsync, Depends(get_vault_client)]
 
