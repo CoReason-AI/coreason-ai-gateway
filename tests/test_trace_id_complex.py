@@ -44,13 +44,16 @@ def mock_dependencies() -> Generator[dict[str, Any], None, None]:
 
         # Mock Pipeline
         pipeline_mock = MagicMock()
-        redis_instance.pipeline.return_value = pipeline_mock
+        # redis.pipeline() is synchronous, so we must replace the AsyncMock's
+        # default async method with a sync Mock that returns the pipeline object.
+        redis_instance.pipeline = MagicMock(return_value=pipeline_mock)
 
         async def aenter(*args: Any, **kwargs: Any) -> MagicMock:
             return pipeline_mock
 
         pipeline_mock.__aenter__ = AsyncMock(side_effect=aenter)
-        pipeline_mock.__aexit__ = AsyncMock()
+        # Must return None to allow exceptions to propagate
+        pipeline_mock.__aexit__ = AsyncMock(return_value=None)
         pipeline_mock.execute = AsyncMock()
 
         # Vault setup
@@ -188,3 +191,99 @@ async def test_streaming_context_preservation(mock_dependencies: dict[str, Any],
                 break
 
     assert found_stream_log, "Log inside stream generator did not contain Trace ID. Context was lost."
+
+
+@pytest.mark.anyio
+async def test_background_task_success_logging(mock_dependencies: dict[str, Any], log_capture: list[str]) -> None:
+    """Verify that successful background task usage recording logs with Trace ID."""
+    mock_response = MagicMock()
+    mock_response.usage.total_tokens = 42
+    mock_response.model_dump.return_value = {"id": "123", "choices": []}
+    mock_dependencies["client"].chat.completions.create.return_value = mock_response
+
+    trace_id = "trace-success-789"
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/v1/chat/completions",
+            json={"model": "gpt-4", "messages": [{"role": "user", "content": "hello"}]},
+            headers={
+                "Authorization": "Bearer valid-token",
+                "X-Coreason-Project-ID": "proj-1",
+                "X-Coreason-Trace-ID": trace_id,
+            },
+        )
+        assert response.status_code == 200
+
+    # Look for the success log
+    found_success_log = False
+    for log_msg in log_capture:
+        log_entry = json.loads(log_msg)
+        record = log_entry.get("record", {})
+        message = record.get("message", "")
+        extra = record.get("extra", {})
+
+        if "Recording usage for Project ID proj-1: 42 tokens" in message:
+            if extra.get("trace_id") == trace_id:
+                found_success_log = True
+                break
+
+    assert found_success_log, "Success log for background task did not contain correct Trace ID"
+
+
+@pytest.mark.anyio
+async def test_streaming_usage_recording_with_trace_id(
+    mock_dependencies: dict[str, Any], log_capture: list[str]
+) -> None:
+    """
+    Verify that when a stream finishes and records usage (in the finally block),
+    the Trace ID is correctly propagated to the accounting log.
+    This tests the complex interaction between stream generator context and accounting.
+    """
+    trace_id = "trace-stream-usage-999"
+
+    async def streaming_generator(**kwargs: Any) -> AsyncGenerator[ChatCompletionChunk, None]:
+        # Yield one chunk
+        chunk = MagicMock(spec=ChatCompletionChunk)
+        chunk.model_dump_json.return_value = '{"id": "1", "choices": []}'
+        chunk.usage = None
+        yield chunk
+
+        # Yield usage chunk (OpenAI style)
+        usage_chunk = MagicMock(spec=ChatCompletionChunk)
+        usage_chunk.usage = MagicMock()
+        usage_chunk.usage.total_tokens = 99
+        usage_chunk.model_dump_json.return_value = ""  # Empty for usage chunk usually or just final
+        yield usage_chunk
+
+    mock_dependencies["client"].chat.completions.create.side_effect = streaming_generator
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/v1/chat/completions",
+            json={"model": "gpt-4", "messages": [{"role": "user", "content": "hello"}], "stream": True},
+            headers={
+                "Authorization": "Bearer valid-token",
+                "X-Coreason-Project-ID": "proj-stream-1",
+                "X-Coreason-Trace-ID": trace_id,
+            },
+        )
+        assert response.status_code == 200
+        # Consume stream
+        for _ in response.iter_lines():
+            pass
+
+    # Verify the accounting log has the trace ID
+    found_usage_log = False
+    for log_msg in log_capture:
+        log_entry = json.loads(log_msg)
+        record = log_entry.get("record", {})
+        message = record.get("message", "")
+        extra = record.get("extra", {})
+
+        if "Recording usage for Project ID proj-stream-1: 99 tokens" in message:
+            if extra.get("trace_id") == trace_id:
+                found_usage_log = True
+                break
+
+    assert found_usage_log, "Streaming usage log did not contain correct Trace ID."
