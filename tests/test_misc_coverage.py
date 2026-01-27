@@ -80,7 +80,8 @@ async def test_accounting_coverage() -> None:
     pipeline.__aenter__ = AsyncMock(side_effect=aenter)
     pipeline.__aexit__ = AsyncMock()
     pipeline.execute = AsyncMock()
-    mock_redis.pipeline.return_value = pipeline
+    # redis.pipeline() is synchronous, so we need to ensure the mock method is synchronous
+    mock_redis.pipeline = MagicMock(return_value=pipeline)
 
     # Exception handling
     pipeline.execute.side_effect = Exception("Redis fail")
