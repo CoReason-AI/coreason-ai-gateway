@@ -110,7 +110,7 @@ async def chat_completions(
     body: ChatCompletionRequest,
     background_tasks: BackgroundTasks,
     client: Annotated[AsyncOpenAI, Depends(get_upstream_client)],
-    redis_client: RedisDep,
+    redis_client: RedisDep,  # type: ignore[type-arg]
     x_coreason_project_id: Annotated[str, Header()],
     token: Annotated[str, Depends(verify_gateway_token)],
     _budget: Annotated[None, Depends(validate_request_budget)],

@@ -12,11 +12,10 @@ from typing import Any, AsyncGenerator, Generator
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from coreason_ai_gateway.server import app  # noqa: E402
 from fastapi.testclient import TestClient
 from openai import APIConnectionError, RateLimitError
 from openai.types.chat import ChatCompletionChunk
-
-from coreason_ai_gateway.server import app  # noqa: E402
 
 
 @pytest.fixture(autouse=True)
