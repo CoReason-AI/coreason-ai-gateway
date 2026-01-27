@@ -9,7 +9,6 @@
 # Source Code: https://github.com/CoReason-AI/coreason_ai_gateway
 
 import os
-import runpy
 from typing import Generator
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -160,9 +159,8 @@ def test_main() -> None:
     with patch("uvicorn.run") as mock_run:
         main()
         mock_run.assert_called_once()
-
-
-def test_main_block() -> None:
-    with patch("uvicorn.run") as mock_run:
-        runpy.run_module("coreason_ai_gateway.main", run_name="__main__")
-        mock_run.assert_called_once()
+        # Verify call arguments
+        args, kwargs = mock_run.call_args
+        assert args[0] == app
+        assert kwargs["host"] == "0.0.0.0"
+        assert kwargs["port"] == 8000

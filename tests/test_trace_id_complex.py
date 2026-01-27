@@ -43,15 +43,23 @@ def mock_dependencies() -> Generator[dict[str, Any], None, None]:
         redis_instance.get.return_value = "1000"
 
         # Mock Pipeline
-        pipeline_mock = MagicMock()
-        redis_instance.pipeline.return_value = pipeline_mock
+        # Use AsyncMock for the pipeline object itself, so its methods (execute, __aenter__) are async
+        pipeline_mock = AsyncMock()
 
-        async def aenter(*args: Any, **kwargs: Any) -> MagicMock:
-            return pipeline_mock
+        # Configure __aenter__ to return the pipeline itself (for "async with pipeline as pipe")
+        pipeline_mock.__aenter__.return_value = pipeline_mock
 
-        pipeline_mock.__aenter__ = AsyncMock(side_effect=aenter)
-        pipeline_mock.__aexit__ = AsyncMock()
-        pipeline_mock.execute = AsyncMock()
+        # Capture the execute mock
+        execute_mock = pipeline_mock.execute
+
+        # Ensure decrby and incrby are MagicMock (synchronous) because pipeline methods queue commands
+        pipeline_mock.decrby = MagicMock()
+        pipeline_mock.incrby = MagicMock()
+
+        # FIX: Explicitly replace the pipeline attribute on redis_instance with a MagicMock (sync)
+        # because redis-py's pipeline() method is synchronous even in async mode.
+        # It returns our async pipeline_mock.
+        redis_instance.pipeline = MagicMock(return_value=pipeline_mock)
 
         # Vault setup
         vault_instance = AsyncMock()
@@ -69,6 +77,7 @@ def mock_dependencies() -> Generator[dict[str, Any], None, None]:
             "openai": mock_openai,
             "client": openai_client,
             "pipeline": pipeline_mock,
+            "execute": execute_mock,
         }
 
 
@@ -112,7 +121,7 @@ async def test_background_task_error_logging(mock_dependencies: dict[str, Any], 
     mock_dependencies["client"].chat.completions.create.return_value = mock_response
 
     # Force Redis failure during accounting
-    mock_dependencies["pipeline"].execute.side_effect = Exception("Redis Connection Failed")
+    mock_dependencies["execute"].side_effect = Exception("Redis Connection Failed")
 
     trace_id = "trace-error-123"
 
