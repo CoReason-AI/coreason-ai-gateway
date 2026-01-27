@@ -8,7 +8,7 @@
 #
 # Source Code: https://github.com/CoReason-AI/coreason_ai_gateway
 
-from typing import Annotated, AsyncIterator
+from typing import Annotated, Any, AsyncIterator
 
 from coreason_vault import VaultManagerAsync
 from fastapi import Depends, Header, HTTPException, Request, status
@@ -41,13 +41,14 @@ def get_vault_client(request: Request) -> VaultManagerAsync:
 
 # Type aliases for use in endpoints
 # Redis[Any] causes runtime TypeError in some envs, so we use bare Redis and suppress mypy
-RedisDep = Annotated[Redis, Depends(get_redis_client)]  # type: ignore[type-arg]
+
+RedisDep = Annotated[Redis[Any], Depends(get_redis_client)]
 VaultDep = Annotated[VaultManagerAsync, Depends(get_vault_client)]
 
 
 async def validate_request_budget(
     body: ChatCompletionRequest,
-    redis_client: RedisDep,  # type: ignore[type-arg]
+    redis_client: RedisDep,
     x_coreason_project_id: Annotated[str, Header()],
 ) -> None:
     """

@@ -12,7 +12,6 @@ from typing import Any, Generator
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from coreason_ai_gateway.server import app
 from fastapi.testclient import TestClient
 from openai import (
     APIConnectionError,
@@ -21,6 +20,8 @@ from openai import (
     InternalServerError,
     RateLimitError,
 )
+
+from coreason_ai_gateway.server import app
 
 
 @pytest.fixture(autouse=True)
