@@ -164,3 +164,15 @@ def test_main() -> None:
         assert args[0] == app
         assert kwargs["host"] == "0.0.0.0"
         assert kwargs["port"] == 8000
+
+
+def test_main_execution_failure() -> None:
+    """Verify that main propagates exceptions from uvicorn.run."""
+    from coreason_ai_gateway.main import main
+
+    with patch("uvicorn.run") as mock_run:
+        # Simulate uvicorn crashing (e.g. port in use)
+        mock_run.side_effect = OSError("Port already in use")
+
+        with pytest.raises(OSError, match="Port already in use"):
+            main()

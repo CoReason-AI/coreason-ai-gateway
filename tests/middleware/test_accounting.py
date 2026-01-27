@@ -13,6 +13,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from openai.types import CompletionUsage
+from redis.exceptions import ConnectionError, RedisError
 
 from coreason_ai_gateway.middleware.accounting import record_usage
 
@@ -124,3 +125,29 @@ async def test_record_usage_concurrency(mock_redis: MagicMock) -> None:
     # Note: Since we reuse the same mock object for all calls, we just verify count
     mock_pipeline = mock_redis.pipeline.return_value.__aenter__.return_value
     assert mock_pipeline.execute.await_count == 5
+
+
+@pytest.mark.anyio
+async def test_record_usage_pipeline_creation_error(mock_redis: MagicMock) -> None:
+    """Test handling when redis.pipeline() raises a synchronous error."""
+    mock_redis.pipeline.side_effect = RedisError("Pipeline creation failed")
+    usage = CompletionUsage(completion_tokens=10, prompt_tokens=20, total_tokens=30)
+
+    # Should catch and log
+    await record_usage("proj-fail", usage, mock_redis)
+
+    mock_redis.pipeline.assert_called_once()
+
+
+@pytest.mark.anyio
+async def test_record_usage_execute_connection_error(mock_redis: MagicMock) -> None:
+    """Test handling when pipe.execute() raises a specific Redis ConnectionError."""
+    mock_pipeline = mock_redis.pipeline.return_value.__aenter__.return_value
+    mock_pipeline.execute.side_effect = ConnectionError("Connection lost")
+
+    usage = CompletionUsage(completion_tokens=10, prompt_tokens=20, total_tokens=30)
+
+    # Should catch and log
+    await record_usage("proj-conn-fail", usage, mock_redis)
+
+    mock_pipeline.execute.assert_awaited_once()
