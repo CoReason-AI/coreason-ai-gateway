@@ -44,13 +44,16 @@ def mock_dependencies() -> Generator[dict[str, Any], None, None]:
 
         # Mock Pipeline
         pipeline_mock = MagicMock()
-        redis_instance.pipeline.return_value = pipeline_mock
+        # redis.pipeline() is synchronous, so we must replace the AsyncMock's
+        # default async method with a sync Mock that returns the pipeline object.
+        redis_instance.pipeline = MagicMock(return_value=pipeline_mock)
 
         async def aenter(*args: Any, **kwargs: Any) -> MagicMock:
             return pipeline_mock
 
         pipeline_mock.__aenter__ = AsyncMock(side_effect=aenter)
-        pipeline_mock.__aexit__ = AsyncMock()
+        # Must return None to allow exceptions to propagate
+        pipeline_mock.__aexit__ = AsyncMock(return_value=None)
         pipeline_mock.execute = AsyncMock()
 
         # Vault setup
