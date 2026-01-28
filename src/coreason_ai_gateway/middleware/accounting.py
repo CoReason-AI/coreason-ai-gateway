@@ -17,6 +17,11 @@ from redis.asyncio import Redis
 
 from coreason_ai_gateway.utils.logger import logger
 
+"""
+Accounting middleware for tracking token usage.
+Updates Redis counters asynchronously.
+"""
+
 
 async def record_usage(
     project_id: str,

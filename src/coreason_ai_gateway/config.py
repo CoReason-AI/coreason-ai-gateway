@@ -14,6 +14,11 @@ from typing import Any, Literal
 from pydantic import AnyHttpUrl, AnyUrl, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+"""
+Configuration management for the Coreason AI Gateway.
+Defines environment variables, settings classes, and validation logic.
+"""
+
 
 class Settings(BaseSettings):
     """

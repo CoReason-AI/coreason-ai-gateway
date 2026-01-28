@@ -15,6 +15,11 @@ from fastapi import Header, HTTPException, status
 
 from coreason_ai_gateway.config import get_settings
 
+"""
+Authentication middleware.
+Verifies the Gateway Access Token against the configured secret.
+"""
+
 
 async def verify_gateway_token(
     authorization: Annotated[str | None, Header()] = None,

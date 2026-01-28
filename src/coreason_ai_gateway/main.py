@@ -12,6 +12,10 @@ import uvicorn
 
 from .server import app
 
+"""
+Application entry point.
+"""
+
 
 def main() -> None:
     """

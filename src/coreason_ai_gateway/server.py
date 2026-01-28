@@ -20,6 +20,11 @@ from .exception_handlers import register_exception_handlers
 from .routers.chat import router as chat_router
 from .utils.logger import logger
 
+"""
+Main server application module.
+Initializes FastAPI app, manages lifecycle (Redis/Vault), and includes routers.
+"""
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:

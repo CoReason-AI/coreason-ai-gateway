@@ -10,6 +10,11 @@
 
 from fastapi import HTTPException, status
 
+"""
+Routing logic for determining upstream providers.
+Maps model names to Vault secret paths.
+"""
+
 
 def resolve_provider_path(model: str) -> str:
     """
