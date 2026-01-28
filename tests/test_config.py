@@ -9,8 +9,9 @@
 # Source Code: https://github.com/CoReason-AI/coreason_ai_gateway
 
 import pytest
-from coreason_ai_gateway.config import get_settings
 from pydantic import ValidationError
+
+from coreason_ai_gateway.config import get_settings
 
 
 @pytest.fixture

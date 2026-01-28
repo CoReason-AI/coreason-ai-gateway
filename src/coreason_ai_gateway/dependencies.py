@@ -8,7 +8,7 @@
 #
 # Source Code: https://github.com/CoReason-AI/coreason_ai_gateway
 
-from typing import Annotated, AsyncIterator
+from typing import TYPE_CHECKING, Annotated, Any, AsyncIterator
 
 from coreason_vault import VaultManagerAsync
 from fastapi import Depends, Header, HTTPException, Request, status
@@ -40,14 +40,24 @@ def get_vault_client(request: Request) -> VaultManagerAsync:
 
 
 # Type aliases for use in endpoints
-# Redis[Any] causes runtime TypeError in some envs, so we use bare Redis and suppress mypy
-RedisDep = Annotated[Redis, Depends(get_redis_client)]  # type: ignore[type-arg]
+if TYPE_CHECKING:
+    RedisType = Redis[Any]
+else:
+    RedisType = Redis
+
+# We cannot easily suppress mypy "unused ignore" because it varies by environment/version.
+# However, the conditional typing above is robust.
+# But Wait, at runtime RedisType is Redis. Annotated[Redis, ...] might still trigger mypy if it thinks Redis is generic.
+# Actually, if we use the alias `RedisType`, mypy sees it as `Redis[Any]`.
+# Runtime sees it as `Redis`.
+# This avoids the TypeError and satisfies mypy without ignores.
+RedisDep = Annotated[RedisType, Depends(get_redis_client)]
 VaultDep = Annotated[VaultManagerAsync, Depends(get_vault_client)]
 
 
 async def validate_request_budget(
     body: ChatCompletionRequest,
-    redis_client: RedisDep,  # type: ignore[type-arg]
+    redis_client: RedisDep,
     x_coreason_project_id: Annotated[str, Header()],
 ) -> None:
     """

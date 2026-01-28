@@ -12,8 +12,9 @@ from typing import Any
 from unittest.mock import AsyncMock, patch
 
 import pytest
-from coreason_ai_gateway.middleware.budget import check_budget, estimate_tokens
 from fastapi import HTTPException
+
+from coreason_ai_gateway.middleware.budget import check_budget, estimate_tokens
 
 # --- estimate_tokens Tests ---
 

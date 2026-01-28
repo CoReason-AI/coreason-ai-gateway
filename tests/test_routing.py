@@ -9,8 +9,9 @@
 # Source Code: https://github.com/CoReason-AI/coreason_ai_gateway
 
 import pytest
-from coreason_ai_gateway.routing import resolve_provider_path
 from fastapi import HTTPException
+
+from coreason_ai_gateway.routing import resolve_provider_path
 
 
 def test_resolve_provider_path_openai() -> None:
