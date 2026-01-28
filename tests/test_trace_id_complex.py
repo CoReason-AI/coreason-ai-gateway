@@ -16,6 +16,7 @@ import pytest
 from fastapi.testclient import TestClient
 from openai.types.chat import ChatCompletionChunk
 
+from coreason_ai_gateway.middleware.accounting import record_usage
 from coreason_ai_gateway.server import app
 from coreason_ai_gateway.utils.logger import logger
 
@@ -201,3 +202,30 @@ async def test_streaming_context_preservation(mock_dependencies: dict[str, Any],
                 break
 
     assert found_stream_log, "Log inside stream generator did not contain Trace ID. Context was lost."
+
+
+@pytest.mark.anyio
+async def test_accounting_pipeline_integrity(mock_dependencies: dict[str, Any]) -> None:
+    """
+    Verify that record_usage correctly queues commands on the pipeline
+    and executes them. This ensures mocks are wired correctly and logic is sound.
+    """
+    project_id = "proj-integrity"
+    usage = MagicMock()
+    usage.total_tokens = 42
+
+    pipeline_mock = mock_dependencies["pipeline"]
+    redis_client = mock_dependencies["redis"]
+
+    # Manually invoke record_usage to verify pipeline interaction
+    await record_usage(project_id, usage, redis_client, trace_id="trace-integrity")
+
+    # Verify pipeline was created
+    redis_client.pipeline.assert_called_once()
+
+    # Verify commands
+    pipeline_mock.decrby.assert_called_once_with(f"budget:{project_id}:remaining", 42)
+    pipeline_mock.incrby.assert_called_once_with(f"usage:{project_id}:total", 42)
+
+    # Verify execute
+    pipeline_mock.execute.assert_awaited_once()
