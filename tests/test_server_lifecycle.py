@@ -9,7 +9,6 @@
 # Source Code: https://github.com/CoReason-AI/coreason_ai_gateway
 
 import os
-import runpy
 from typing import Generator
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -160,9 +159,20 @@ def test_main() -> None:
     with patch("uvicorn.run") as mock_run:
         main()
         mock_run.assert_called_once()
+        # Verify call arguments
+        args, kwargs = mock_run.call_args
+        assert args[0] == app
+        assert kwargs["host"] == "0.0.0.0"
+        assert kwargs["port"] == 8000
 
 
-def test_main_block() -> None:
+def test_main_execution_failure() -> None:
+    """Verify that main propagates exceptions from uvicorn.run."""
+    from coreason_ai_gateway.main import main
+
     with patch("uvicorn.run") as mock_run:
-        runpy.run_module("coreason_ai_gateway.main", run_name="__main__")
-        mock_run.assert_called_once()
+        # Simulate uvicorn crashing (e.g. port in use)
+        mock_run.side_effect = OSError("Port already in use")
+
+        with pytest.raises(OSError, match="Port already in use"):
+            main()

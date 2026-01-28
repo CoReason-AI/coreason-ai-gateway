@@ -8,11 +8,17 @@
 #
 # Source Code: https://github.com/CoReason-AI/coreason_ai_gateway
 
-from typing import Annotated
+from typing import TYPE_CHECKING, Annotated, Any, AsyncIterator
 
 from coreason_vault import VaultManagerAsync
-from fastapi import Depends, Request
+from fastapi import Depends, Header, HTTPException, Request, status
+from openai import AsyncOpenAI
 from redis.asyncio import Redis
+
+from coreason_ai_gateway.middleware.budget import check_budget, estimate_tokens
+from coreason_ai_gateway.routing import resolve_provider_path
+from coreason_ai_gateway.schemas import ChatCompletionRequest
+from coreason_ai_gateway.utils.logger import logger
 
 
 def get_redis_client(request: Request) -> Redis:  # type: ignore[type-arg]
@@ -34,5 +40,67 @@ def get_vault_client(request: Request) -> VaultManagerAsync:
 
 
 # Type aliases for use in endpoints
-RedisDep = Annotated[Redis, Depends(get_redis_client)]
+if TYPE_CHECKING:
+    RedisType = Redis[Any]
+else:
+    RedisType = Redis
+
+# We cannot easily suppress mypy "unused ignore" because it varies by environment/version.
+# However, the conditional typing above is robust.
+# But Wait, at runtime RedisType is Redis. Annotated[Redis, ...] might still trigger mypy if it thinks Redis is generic.
+# Actually, if we use the alias `RedisType`, mypy sees it as `Redis[Any]`.
+# Runtime sees it as `Redis`.
+# This avoids the TypeError and satisfies mypy without ignores.
+RedisDep = Annotated[RedisType, Depends(get_redis_client)]
 VaultDep = Annotated[VaultManagerAsync, Depends(get_vault_client)]
+
+
+async def validate_request_budget(
+    body: ChatCompletionRequest,
+    redis_client: RedisDep,
+    x_coreason_project_id: Annotated[str, Header()],
+) -> None:
+    """
+    Dependency that enforces budget limits for the incoming request.
+    Calculates estimated cost and rejects if budget is insufficient.
+    """
+    estimated_tokens = estimate_tokens(body.messages)
+    await check_budget(x_coreason_project_id, estimated_tokens, redis_client)
+
+
+async def get_upstream_client(
+    body: ChatCompletionRequest,
+    vault_client: VaultDep,
+) -> AsyncIterator[AsyncOpenAI]:
+    """
+    Dependency that provides an authenticated AsyncOpenAI client.
+    Handles Just-In-Time secret retrieval and client lifecycle.
+    """
+    provider_path = resolve_provider_path(body.model)
+    try:
+        # According to TRD: secret/infrastructure/{provider}
+        secret_path = f"secret/{provider_path}"
+        secret_data = await vault_client.get_secret(secret_path)
+    except Exception as e:
+        logger.exception(f"Vault secret retrieval failed for {provider_path}")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Security subsystem unavailable",
+        ) from e
+
+    if not secret_data or "api_key" not in secret_data:
+        logger.error(f"Invalid secret structure for {provider_path}")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Security subsystem unavailable",
+        )
+
+    api_key = secret_data["api_key"]
+
+    # Client Instantiation
+    # Disable internal retries to let tenacity handle resilience policies
+    client = AsyncOpenAI(api_key=api_key, max_retries=0)
+    try:
+        yield client
+    finally:
+        await client.close()
