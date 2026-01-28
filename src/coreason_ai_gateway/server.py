@@ -17,9 +17,7 @@ from fastapi import (
     Depends,
     FastAPI,
     Header,
-    HTTPException,
     Request,
-    status,
 )
 from fastapi.responses import StreamingResponse
 from openai import (
@@ -38,12 +36,10 @@ from tenacity import (
 )
 
 from .config import get_settings
-from .dependencies import RedisDep, VaultDep
+from .dependencies import RedisDep, get_upstream_client, validate_request_budget
 from .exception_handlers import register_exception_handlers
 from .middleware.accounting import record_usage
 from .middleware.auth import verify_gateway_token
-from .middleware.budget import check_budget, estimate_tokens
-from .routing import resolve_provider_path
 from .schemas import ChatCompletionRequest
 from .utils.logger import logger
 
@@ -113,15 +109,16 @@ async def chat_completions(
     request: Request,
     body: ChatCompletionRequest,
     background_tasks: BackgroundTasks,
-    redis_client: RedisDep,  # type: ignore[type-arg]
-    vault_client: VaultDep,
-    token: Annotated[str, Depends(verify_gateway_token)],
+    client: Annotated[AsyncOpenAI, Depends(get_upstream_client)],
+    redis_client: RedisDep,
     x_coreason_project_id: Annotated[str, Header()],
+    token: Annotated[str, Depends(verify_gateway_token)],
+    _budget: Annotated[None, Depends(validate_request_budget)],
     x_coreason_trace_id: Annotated[str | None, Header()] = None,
 ) -> Any:
     """
     Proxies chat completion requests to LLM providers.
-    Enforces authentication, budgeting, and JIT secret injection.
+    Enforces authentication, budgeting, and JIT secret injection via dependencies.
     """
     settings = get_settings()
 
@@ -130,35 +127,14 @@ async def chat_completions(
         context["trace_id"] = x_coreason_trace_id
 
     with logger.contextualize(**context):
-        # 1. Budget Check (Fail Fast)
-        estimated_tokens = estimate_tokens(body.messages)
-        await check_budget(x_coreason_project_id, estimated_tokens, redis_client)
+        # Upstream Execution (with Retry)
+        # Note: Client instantiation and Vault retrieval are now handled by `client` dependency.
+        # Budget check is handled by `_budget` dependency.
 
-        # 2. Secret Retrieval (JIT)
-        provider_path = resolve_provider_path(body.model)
-        try:
-            # According to TRD: secret/infrastructure/{provider}
-            secret_path = f"secret/{provider_path}"
-            secret_data = await vault_client.get_secret(secret_path)
-        except Exception as e:
-            logger.exception(f"Vault secret retrieval failed for {provider_path}")
-            raise HTTPException(
-                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail="Security subsystem unavailable",
-            ) from e
-
-        if not secret_data or "api_key" not in secret_data:
-            logger.error(f"Invalid secret structure for {provider_path}")
-            raise HTTPException(
-                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail="Security subsystem unavailable",
-            )
-
-        api_key = secret_data["api_key"]
-
-        # 3. Client Instantiation & Upstream Execution
-        # Disable internal retries to let tenacity handle resilience policies
-        client = AsyncOpenAI(api_key=api_key, max_retries=0)
+        # We rely on FastAPI dependency teardown to close the client.
+        # However, for streaming response, we need to ensure the client stays open
+        # until the stream is consumed. FastAPI dependency teardown happens AFTER
+        # the response is sent. So yielding the client in dependency is correct.
 
         try:
             # Prepare arguments
@@ -177,18 +153,11 @@ async def chat_completions(
                     response = await client.chat.completions.create(**kwargs)
 
         except Exception as e:
-            # Exceptions are now handled by global exception handlers.
-            # However, we must ensure client is closed.
-            await client.close()
-            # If it's not one of our handled types, we might want to log it or let it bubble up.
-            # But if we let it bubble up, FastAPI catches it as 500 if unhandled.
-            # Our exception handlers cover OpenAI errors. Generic Exception is not covered.
-            # So we should probably re-raise or handle as 500 explicitly if we want custom logging.
-            # But we also have retry logic which catches exceptions.
-            # Wait, tenacity re-raises.
+            # Exceptions are handled by global handlers or retried.
+            # Client closing is handled by dependency teardown.
             raise e
 
-        # 4. Handle Response
+        # Handle Response
         if body.stream:
 
             async def stream_generator() -> AsyncIterator[str]:
@@ -205,7 +174,7 @@ async def chat_completions(
                             yield f"data: {chunk.model_dump_json()}\n\n"
                         yield "data: [DONE]\n\n"
                     finally:
-                        await client.close()
+                        # Client close handled by dependency teardown
                         if usage:
                             await record_usage(x_coreason_project_id, usage, redis_client, trace_id=x_coreason_trace_id)
 
@@ -213,7 +182,7 @@ async def chat_completions(
 
         else:
             # response is ChatCompletion
-            await client.close()
+            # Client close handled by dependency teardown
             background_tasks.add_task(
                 record_usage,
                 x_coreason_project_id,
