@@ -10,7 +10,7 @@
 
 import json
 from typing import Any, AsyncGenerator, Generator
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 from fastapi.testclient import TestClient
@@ -19,71 +19,6 @@ from openai.types.chat import ChatCompletionChunk
 from coreason_ai_gateway.middleware.accounting import record_usage
 from coreason_ai_gateway.server import app
 from coreason_ai_gateway.utils.logger import logger
-
-
-@pytest.fixture(autouse=True)
-def setup_env(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("VAULT_ADDR", "http://vault:8200")
-    monkeypatch.setenv("VAULT_ROLE_ID", "dummy-role-id")
-    monkeypatch.setenv("VAULT_SECRET_ID", "dummy-secret-id")
-    monkeypatch.setenv("REDIS_URL", "redis://redis:6379")
-    monkeypatch.setenv("GATEWAY_ACCESS_TOKEN", "valid-token")
-
-
-@pytest.fixture
-def mock_dependencies() -> Generator[dict[str, Any], None, None]:
-    with (
-        patch("coreason_ai_gateway.server.redis.from_url") as mock_redis,
-        patch("coreason_ai_gateway.server.VaultManagerAsync") as mock_vault,
-        patch("coreason_ai_gateway.server.CoreasonVaultConfig"),
-        patch("coreason_ai_gateway.dependencies.AsyncOpenAI") as mock_openai,
-    ):
-        # Redis setup
-        redis_instance = AsyncMock()
-        mock_redis.return_value = redis_instance
-        redis_instance.get.return_value = "1000"
-
-        # Mock Pipeline
-        # Use MagicMock for the pipeline object itself, but configure async methods explicitly.
-        # This prevents "coroutine never awaited" warnings from implicit AsyncMock children.
-        pipeline_mock = MagicMock()
-
-        # Configure __aenter__ to return the pipeline itself (for "async with pipeline as pipe")
-        # We need __aenter__ to be an AsyncMock that returns pipeline_mock when awaited.
-        pipeline_mock.__aenter__ = AsyncMock(return_value=pipeline_mock)
-        pipeline_mock.__aexit__ = AsyncMock(return_value=None)
-
-        # Configure execute to be async
-        pipeline_mock.execute = AsyncMock()
-        execute_mock = pipeline_mock.execute
-
-        # Ensure decrby and incrby are MagicMock (synchronous) because pipeline methods queue commands
-        pipeline_mock.decrby = MagicMock()
-        pipeline_mock.incrby = MagicMock()
-
-        # FIX: Explicitly replace the pipeline attribute on redis_instance with a MagicMock (sync)
-        # because redis-py's pipeline() method is synchronous even in async mode.
-        # It returns our async pipeline_mock.
-        redis_instance.pipeline = MagicMock(return_value=pipeline_mock)
-
-        # Vault setup
-        vault_instance = AsyncMock()
-        mock_vault.return_value = vault_instance
-        vault_instance.authenticate = AsyncMock()
-        vault_instance.get_secret.return_value = {"api_key": "sk-test"}
-
-        # OpenAI setup
-        openai_client = AsyncMock()
-        mock_openai.return_value = openai_client
-
-        yield {
-            "redis": redis_instance,
-            "vault": vault_instance,
-            "openai": mock_openai,
-            "client": openai_client,
-            "pipeline": pipeline_mock,
-            "execute": execute_mock,
-        }
 
 
 @pytest.fixture

@@ -173,7 +173,7 @@ async def test_integration_upstream_failure_exhausted(mock_external_deps: dict[s
         return_value=Response(500, json={"error": "server_error"})
     )
 
-    with patch("coreason_ai_gateway.server.get_settings") as mock_settings:
+    with patch("coreason_ai_gateway.routers.chat.get_settings") as mock_settings:
         settings = mock_settings.return_value
         settings.RETRY_WAIT_MIN = 0.01
         settings.RETRY_WAIT_MAX = 0.05
@@ -252,7 +252,7 @@ async def test_integration_upstream_connection_error(mock_external_deps: dict[st
         side_effect=httpx.ConnectError("Connection refused", request=MagicMock())
     )
 
-    with patch("coreason_ai_gateway.server.get_settings") as mock_settings:
+    with patch("coreason_ai_gateway.routers.chat.get_settings") as mock_settings:
         settings = mock_settings.return_value
         settings.RETRY_WAIT_MIN = 0.01
         settings.RETRY_WAIT_MAX = 0.05

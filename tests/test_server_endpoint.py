@@ -8,8 +8,8 @@
 #
 # Source Code: https://github.com/CoReason-AI/coreason_ai_gateway
 
-from typing import Any, AsyncGenerator, Generator
-from unittest.mock import AsyncMock, MagicMock, patch
+from typing import Any, AsyncGenerator
+from unittest.mock import MagicMock
 
 import pytest
 from fastapi.testclient import TestClient
@@ -17,62 +17,6 @@ from openai import APIConnectionError, RateLimitError
 from openai.types.chat import ChatCompletionChunk
 
 from coreason_ai_gateway.server import app  # noqa: E402
-
-
-@pytest.fixture(autouse=True)
-def setup_env(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("VAULT_ADDR", "http://vault:8200")
-    monkeypatch.setenv("VAULT_ROLE_ID", "dummy-role-id")
-    monkeypatch.setenv("VAULT_SECRET_ID", "dummy-secret-id")
-    monkeypatch.setenv("REDIS_URL", "redis://redis:6379")
-    monkeypatch.setenv("GATEWAY_ACCESS_TOKEN", "valid-token")
-
-
-@pytest.fixture
-def mock_dependencies() -> Generator[dict[str, Any], None, None]:
-    with (
-        patch("coreason_ai_gateway.server.redis.from_url") as mock_redis,
-        patch("coreason_ai_gateway.server.VaultManagerAsync") as mock_vault,
-        patch("coreason_ai_gateway.server.CoreasonVaultConfig"),
-        patch("coreason_ai_gateway.dependencies.AsyncOpenAI") as mock_openai,
-    ):
-        # Redis setup
-        redis_instance = AsyncMock()
-        mock_redis.return_value = redis_instance
-        redis_instance.get.return_value = "1000"  # Sufficient budget by default
-
-        # Configure pipeline mock for async with
-        # redis.pipeline() is synchronous, returns a context manager
-        redis_instance.pipeline = MagicMock()
-        pipeline_mock = MagicMock()  # Not AsyncMock, so methods are sync by default
-        redis_instance.pipeline.return_value = pipeline_mock
-
-        async def aenter(*args: Any, **kwargs: Any) -> MagicMock:
-            return pipeline_mock
-
-        pipeline_mock.__aenter__ = AsyncMock(side_effect=aenter)
-        pipeline_mock.__aexit__ = AsyncMock()
-        pipeline_mock.execute = AsyncMock()
-
-        # Vault setup
-        vault_instance = AsyncMock()
-        mock_vault.return_value = vault_instance
-        vault_instance.auth = AsyncMock()
-        vault_instance.auth.authenticate_approle = AsyncMock()
-        vault_instance.auth.close = AsyncMock()
-        vault_instance.get_secret.return_value = {"api_key": "sk-test"}
-
-        # OpenAI setup
-        openai_client = AsyncMock()
-        mock_openai.return_value = openai_client
-
-        yield {"redis": redis_instance, "vault": vault_instance, "openai": mock_openai, "client": openai_client}
-
-
-@pytest.fixture
-def client(mock_dependencies: dict[str, Any]) -> Generator[TestClient, None, None]:
-    with TestClient(app) as c:
-        yield c
 
 
 def test_auth_failure(client: TestClient) -> None:
