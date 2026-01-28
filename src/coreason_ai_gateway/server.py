@@ -23,6 +23,21 @@ from .utils.logger import logger
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+    """
+    Manages the application lifecycle, including connection pools.
+
+    Initializes Redis and Vault clients on startup and ensures they are
+    properly closed on shutdown.
+
+    Args:
+        app (FastAPI): The FastAPI application instance.
+
+    Yields:
+        None: Control is yielded to the application during its runtime.
+
+    Raises:
+        Exception: If initialization of Redis or Vault fails.
+    """
     settings = get_settings()
     logger.info("Starting up Coreason AI Gateway...")
 
@@ -80,5 +95,8 @@ app.include_router(chat_router)
 async def health_check() -> dict[str, str]:
     """
     Health check endpoint to verify service status.
+
+    Returns:
+        dict[str, str]: A dictionary containing the service status (e.g., {"status": "ok"}).
     """
     return {"status": "ok"}
