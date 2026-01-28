@@ -13,11 +13,10 @@ from typing import Any, AsyncGenerator, Generator
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from fastapi.testclient import TestClient
-from openai.types.chat import ChatCompletionChunk
-
 from coreason_ai_gateway.server import app
 from coreason_ai_gateway.utils.logger import logger
+from fastapi.testclient import TestClient
+from openai.types.chat import ChatCompletionChunk
 
 
 @pytest.fixture(autouse=True)

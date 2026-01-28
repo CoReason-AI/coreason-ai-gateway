@@ -9,10 +9,9 @@
 # Source Code: https://github.com/CoReason-AI/coreason_ai_gateway
 
 import pytest
+from coreason_ai_gateway.middleware.auth import verify_gateway_token
 from fastapi import HTTPException
 from pydantic import SecretStr
-
-from coreason_ai_gateway.middleware.auth import verify_gateway_token
 
 
 @pytest.fixture

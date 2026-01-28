@@ -11,9 +11,8 @@
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-from fastapi import Request
-
 from coreason_ai_gateway.dependencies import get_redis_client, get_vault_client
+from fastapi import Request
 
 
 @pytest.mark.anyio
