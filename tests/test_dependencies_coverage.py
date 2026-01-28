@@ -13,7 +13,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from fastapi import Request
 
-from coreason_ai_gateway.dependencies import get_redis_client, get_vault_client
+from coreason_ai_gateway.dependencies import get_redis_client, get_service, get_vault_client
 
 
 @pytest.mark.anyio
@@ -23,6 +23,9 @@ async def test_dependencies_coverage() -> None:
     request.app.state = MagicMock()
     del request.app.state.redis
     del request.app.state.vault
+    # Ensure service is also missing (MagicMock might auto-create attributes)
+    if hasattr(request.app.state, "service"):
+        del request.app.state.service
 
     with pytest.raises(RuntimeError, match="Redis client is not initialized"):
         get_redis_client(request)
@@ -30,9 +33,14 @@ async def test_dependencies_coverage() -> None:
     with pytest.raises(RuntimeError, match="Vault client is not initialized"):
         get_vault_client(request)
 
+    with pytest.raises(RuntimeError, match="Service is not initialized"):
+        get_service(request)
+
     # Success case
     request.app.state.redis = AsyncMock()
     request.app.state.vault = AsyncMock()
+    request.app.state.service = AsyncMock()
 
     assert get_redis_client(request) is request.app.state.redis
     assert get_vault_client(request) is request.app.state.vault
+    assert get_service(request) is request.app.state.service

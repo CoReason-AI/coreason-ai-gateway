@@ -32,7 +32,7 @@ def mock_dependencies() -> Generator[dict[str, Any], None, None]:
         patch("coreason_ai_gateway.server.redis.from_url") as mock_redis,
         patch("coreason_ai_gateway.server.VaultManagerAsync") as mock_vault,
         patch("coreason_ai_gateway.server.CoreasonVaultConfig"),
-        patch("coreason_ai_gateway.dependencies.AsyncOpenAI") as mock_openai,
+        patch("coreason_ai_gateway.service.AsyncOpenAI") as mock_openai,
     ):
         # Redis setup
         redis_instance = AsyncMock()

@@ -73,3 +73,40 @@ async def test_lifespan_config_failure() -> None:
 
         # Verify Redis was closed
         redis_instance.close.assert_awaited_once()
+
+
+@pytest.mark.anyio
+async def test_lifespan_teardown_exceptions() -> None:
+    """
+    Verify that exceptions during teardown (closing Service/Vault/Redis) are caught and logged,
+    ensuring cleanup continues or at least doesn't crash the shutdown process.
+    """
+    app = FastAPI()
+    with (
+        patch("coreason_ai_gateway.server.redis.from_url") as mock_redis,
+        patch("coreason_ai_gateway.server.VaultManagerAsync") as mock_vault_cls,
+        patch("coreason_ai_gateway.server.CoreasonVaultConfig"),
+        patch("coreason_ai_gateway.service.ServiceAsync") as mock_service_cls,
+    ):
+        redis_instance = AsyncMock()
+        mock_redis.return_value = redis_instance
+
+        vault_instance = AsyncMock()
+        mock_vault_cls.return_value = vault_instance
+
+        service_instance = AsyncMock()
+        mock_service_cls.return_value = service_instance
+
+        # Configure exceptions during close
+        redis_instance.close.side_effect = Exception("Redis Close Error")
+        vault_instance.auth.close.side_effect = Exception("Vault Close Error")
+        service_instance.__aexit__.side_effect = Exception("Service Close Error")
+
+        # Should not raise exception
+        async with lifespan(app):
+            pass
+
+        # Verify close was attempted
+        redis_instance.close.assert_awaited()
+        vault_instance.auth.close.assert_awaited()
+        service_instance.__aexit__.assert_awaited()
