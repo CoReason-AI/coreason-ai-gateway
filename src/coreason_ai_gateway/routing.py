@@ -16,13 +16,13 @@ def resolve_provider_path(model: str) -> str:
     Resolves the Vault secret path based on the requested model name.
 
     Args:
-        model: The model identifier (e.g., 'gpt-4o', 'claude-3-opus').
+        model (str): The model identifier (e.g., 'gpt-4o', 'claude-3-opus').
 
     Returns:
-        The path suffix for the secret in Vault (e.g., 'infrastructure/openai').
+        str: The path suffix for the secret in Vault (e.g., 'infrastructure/openai').
 
     Raises:
-        HTTPException: If the model is not supported.
+        HTTPException: If the model is not supported (400 Bad Request).
     """
     if model.startswith(("gpt-", "o1-")):
         return "infrastructure/openai"

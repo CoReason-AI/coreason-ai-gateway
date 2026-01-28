@@ -17,6 +17,23 @@ from pydantic import BaseModel, Field
 class ChatCompletionRequest(BaseModel):
     """
     Pydantic model mirroring the OpenAI Chat Completion API request body.
+
+    Attributes:
+        model (str): ID of the model to use (e.g., 'gpt-4o').
+        messages (List[ChatCompletionMessageParam]): A list of messages comprising the conversation.
+        temperature (Optional[float]): Sampling temperature between 0 and 2.
+        top_p (Optional[float]): Nucleus sampling alternative to temperature.
+        n (Optional[int]): Number of completion choices to generate.
+        stream (Optional[bool]): If True, sends partial message deltas.
+        stream_options (Optional[ChatCompletionStreamOptionsParam]): Options for streaming response.
+        stop (Optional[str | List[str]]): Sequences where the API will stop generating.
+        max_tokens (Optional[int]): Maximum number of tokens to generate.
+        presence_penalty (Optional[float]): Penalty for new tokens based on existing presence.
+        frequency_penalty (Optional[float]): Penalty for new tokens based on existing frequency.
+        logit_bias (Optional[dict[str, int]]): Token likelihood modifications.
+        user (Optional[str]): Unique identifier for the end-user.
+        tools (Optional[List[Any]]): List of tools the model may call.
+        tool_choice (Optional[Any]): Controls which tool is called by the model.
     """
 
     model: str = Field(..., description="ID of the model to use.")
