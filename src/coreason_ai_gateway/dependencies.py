@@ -8,16 +8,16 @@
 #
 # Source Code: https://github.com/CoReason-AI/coreason_ai_gateway
 
-from typing import TYPE_CHECKING, Annotated, Any, AsyncIterator
+from typing import TYPE_CHECKING, Annotated, Any
 
 from coreason_vault import VaultManagerAsync
 from fastapi import Depends, Header, HTTPException, Request, status
-from openai import AsyncOpenAI
 from redis.asyncio import Redis
 
 from coreason_ai_gateway.middleware.budget import check_budget, estimate_tokens
 from coreason_ai_gateway.routing import resolve_provider_path
 from coreason_ai_gateway.schemas import ChatCompletionRequest
+from coreason_ai_gateway.service import ServiceAsync
 from coreason_ai_gateway.utils.logger import logger
 
 """
@@ -62,6 +62,24 @@ def get_vault_client(request: Request) -> VaultManagerAsync:
     return request.app.state.vault
 
 
+def get_service(request: Request) -> ServiceAsync:
+    """
+    Dependency to retrieve the ServiceAsync from app state.
+
+    Args:
+        request (Request): The incoming HTTP request.
+
+    Returns:
+        ServiceAsync: The initialized Service from app.state.
+
+    Raises:
+        RuntimeError: If the Service is not initialized in app state.
+    """
+    if not hasattr(request.app.state, "service"):
+        raise RuntimeError("Service is not initialized in app state")
+    return request.app.state.service  # type: ignore[no-any-return]
+
+
 # Type aliases for use in endpoints
 if TYPE_CHECKING:
     RedisType = Redis[Any]
@@ -102,20 +120,20 @@ async def validate_request_budget(
     await check_budget(x_coreason_project_id, estimated_tokens, redis_client)
 
 
-async def get_upstream_client(
+async def get_upstream_api_key(
     body: ChatCompletionRequest,
     vault_client: VaultDep,
-) -> AsyncIterator[AsyncOpenAI]:
+) -> str:
     """
-    Dependency that provides an authenticated AsyncOpenAI client.
-    Handles Just-In-Time secret retrieval and client lifecycle.
+    Dependency that retrieves the API Key for the upstream provider.
+    Handles Just-In-Time secret retrieval.
 
     Args:
         body (ChatCompletionRequest): The parsed request body.
         vault_client (VaultDep): The injected Vault client.
 
-    Yields:
-        AsyncOpenAI: An authenticated OpenAI client instance.
+    Returns:
+        str: The API key.
 
     Raises:
         HTTPException: 503 Service Unavailable if secret retrieval fails or structure is invalid.
@@ -139,12 +157,4 @@ async def get_upstream_client(
             detail="Security subsystem unavailable",
         )
 
-    api_key = secret_data["api_key"]
-
-    # Client Instantiation
-    # Disable internal retries to let tenacity handle resilience policies
-    client = AsyncOpenAI(api_key=api_key, max_retries=0)
-    try:
-        yield client
-    finally:
-        await client.close()
+    return str(secret_data["api_key"])

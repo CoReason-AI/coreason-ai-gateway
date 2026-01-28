@@ -70,10 +70,23 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             await app.state.redis.close()
         raise e
 
+    # 3. Setup Service
+    from coreason_ai_gateway.service import ServiceAsync
+
+    app.state.service = ServiceAsync()
+    logger.info("Service initialized.")
+
     yield
 
-    # 3. Teardown
+    # 4. Teardown
     logger.info("Shutting down Coreason AI Gateway...")
+    if hasattr(app.state, "service"):
+        try:
+            await app.state.service.__aexit__(None, None, None)
+            logger.info("Service closed.")
+        except Exception:
+            logger.exception("Failed to close Service")
+
     if hasattr(app.state, "redis"):
         try:
             await app.state.redis.close()

@@ -18,25 +18,12 @@ from fastapi import (
     Request,
 )
 from fastapi.responses import StreamingResponse
-from openai import (
-    APIConnectionError,
-    AsyncOpenAI,
-    InternalServerError,
-    RateLimitError,
-)
-from tenacity import (
-    AsyncRetrying,
-    retry_if_exception_type,
-    stop_after_attempt,
-    stop_after_delay,
-    wait_exponential,
-)
 
-from coreason_ai_gateway.config import get_settings
-from coreason_ai_gateway.dependencies import RedisDep, get_upstream_client, validate_request_budget
+from coreason_ai_gateway.dependencies import RedisDep, get_service, get_upstream_api_key, validate_request_budget
 from coreason_ai_gateway.middleware.accounting import record_usage
 from coreason_ai_gateway.middleware.auth import verify_gateway_token
 from coreason_ai_gateway.schemas import ChatCompletionRequest
+from coreason_ai_gateway.service import ServiceAsync
 from coreason_ai_gateway.utils.logger import logger
 
 """
@@ -53,7 +40,8 @@ async def chat_completions(
     request: Request,
     body: ChatCompletionRequest,
     background_tasks: BackgroundTasks,
-    client: Annotated[AsyncOpenAI, Depends(get_upstream_client)],
+    service: Annotated[ServiceAsync, Depends(get_service)],
+    api_key: Annotated[str, Depends(get_upstream_api_key)],
     redis_client: RedisDep,
     x_coreason_project_id: Annotated[str, Header()],
     token: Annotated[str, Depends(verify_gateway_token)],
@@ -68,7 +56,8 @@ async def chat_completions(
         request (Request): The incoming HTTP request.
         body (ChatCompletionRequest): The parsed request body matching OpenAI schema.
         background_tasks (BackgroundTasks): FastAPI background task manager for accounting.
-        client (AsyncOpenAI): Injected upstream client with JIT secret.
+        service (ServiceAsync): Injected core service.
+        api_key (str): Injected upstream API Key.
         redis_client (Redis): Injected Redis client.
         x_coreason_project_id (str): The project ID from the header.
         token (str): The verified gateway access token.
@@ -78,41 +67,20 @@ async def chat_completions(
     Returns:
         Any: A ChatCompletion response or a StreamingResponse (SSE).
     """
-    settings = get_settings()
-
     context = {}
     if x_coreason_trace_id:
         context["trace_id"] = x_coreason_trace_id
 
     with logger.contextualize(**context):
-        # Upstream Execution (with Retry)
-        # Note: Client instantiation and Vault retrieval are now handled by `client` dependency.
+        # Upstream Execution (via ServiceAsync)
+        # Note: Client instantiation, Retry, and Provider interaction are handled by ServiceAsync.
         # Budget check is handled by `_budget` dependency.
 
-        # We rely on FastAPI dependency teardown to close the client.
-        # However, for streaming response, we need to ensure the client stays open
-        # until the stream is consumed. FastAPI dependency teardown happens AFTER
-        # the response is sent. So yielding the client in dependency is correct.
-
         try:
-            # Prepare arguments
-            kwargs = body.model_dump(exclude_unset=True)
-
-            async for attempt in AsyncRetrying(
-                stop=(
-                    stop_after_attempt(settings.RETRY_STOP_AFTER_ATTEMPT)
-                    | stop_after_delay(settings.RETRY_STOP_AFTER_DELAY)
-                ),
-                wait=wait_exponential(multiplier=1, min=settings.RETRY_WAIT_MIN, max=settings.RETRY_WAIT_MAX),
-                retry=retry_if_exception_type((RateLimitError, APIConnectionError, InternalServerError)),
-                reraise=True,
-            ):
-                with attempt:
-                    response = await client.chat.completions.create(**kwargs)
+            response = await service.chat_completions(body, api_key)
 
         except Exception as e:
-            # Exceptions are handled by global handlers or retried.
-            # Client closing is handled by dependency teardown.
+            # Exceptions are handled by global handlers or retried in service.
             raise e
 
         # Handle Response
@@ -123,7 +91,7 @@ async def chat_completions(
                 with logger.contextualize(**context):
                     usage = None
                     try:
-                        # response is an AsyncStream
+                        # response is an AsyncStream (AsyncIterator[ChatCompletionChunk])
                         async for chunk in response:
                             # Capture usage if available (OpenAI stream_options)
                             if hasattr(chunk, "usage") and chunk.usage:
@@ -132,7 +100,6 @@ async def chat_completions(
                             yield f"data: {chunk.model_dump_json()}\n\n"
                         yield "data: [DONE]\n\n"
                     finally:
-                        # Client close handled by dependency teardown
                         if usage:
                             await record_usage(x_coreason_project_id, usage, redis_client, trace_id=x_coreason_trace_id)
 
@@ -140,11 +107,10 @@ async def chat_completions(
 
         else:
             # response is ChatCompletion
-            # Client close handled by dependency teardown
             background_tasks.add_task(
                 record_usage,
                 x_coreason_project_id,
-                response.usage,
+                response.usage,  # type: ignore
                 redis_client,
                 trace_id=x_coreason_trace_id,
             )
