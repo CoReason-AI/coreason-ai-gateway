@@ -43,13 +43,17 @@ def mock_dependencies() -> Generator[dict[str, Any], None, None]:
         redis_instance.get.return_value = "1000"
 
         # Mock Pipeline
-        # Use AsyncMock for the pipeline object itself, so its methods (execute, __aenter__) are async
-        pipeline_mock = AsyncMock()
+        # Use MagicMock for the pipeline object itself, but configure async methods explicitly.
+        # This prevents "coroutine never awaited" warnings from implicit AsyncMock children.
+        pipeline_mock = MagicMock()
 
         # Configure __aenter__ to return the pipeline itself (for "async with pipeline as pipe")
-        pipeline_mock.__aenter__.return_value = pipeline_mock
+        # We need __aenter__ to be an AsyncMock that returns pipeline_mock when awaited.
+        pipeline_mock.__aenter__ = AsyncMock(return_value=pipeline_mock)
+        pipeline_mock.__aexit__ = AsyncMock(return_value=None)
 
-        # Capture the execute mock
+        # Configure execute to be async
+        pipeline_mock.execute = AsyncMock()
         execute_mock = pipeline_mock.execute
 
         # Ensure decrby and incrby are MagicMock (synchronous) because pipeline methods queue commands
