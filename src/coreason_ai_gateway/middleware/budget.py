@@ -19,7 +19,14 @@ from redis.asyncio import Redis
 
 def estimate_tokens(messages: list[dict[str, Any]]) -> int:
     """
-    Heuristic to estimate token count: len(json.dumps(messages)) // 4.
+    Estimates the number of tokens in the messages using a fast heuristic.
+    Rule: len(json.dumps(messages)) // 4.
+
+    Args:
+        messages (list[dict[str, Any]]): The list of message dictionaries.
+
+    Returns:
+        int: The estimated token count.
     """
     try:
         content = json.dumps(messages)
@@ -35,9 +42,9 @@ async def check_budget(project_id: str, estimated_cost: int, redis_client: Redis
     Raises HTTPException(402) if budget is insufficient or missing.
 
     Args:
-        project_id: The Project ID from headers.
-        estimated_cost: The estimated token cost.
-        redis_client: The Async Redis client.
+        project_id (str): The Project ID from headers.
+        estimated_cost (int): The estimated token cost.
+        redis_client (Redis[Any]): The Async Redis client.
 
     Raises:
         HTTPException: 402 Payment Required if budget < cost.

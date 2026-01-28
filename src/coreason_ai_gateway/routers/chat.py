@@ -57,6 +57,20 @@ async def chat_completions(
     """
     Proxies chat completion requests to LLM providers.
     Enforces authentication, budgeting, and JIT secret injection via dependencies.
+
+    Args:
+        request (Request): The incoming HTTP request.
+        body (ChatCompletionRequest): The parsed request body matching OpenAI schema.
+        background_tasks (BackgroundTasks): FastAPI background task manager for accounting.
+        client (AsyncOpenAI): Injected upstream client with JIT secret.
+        redis_client (Redis): Injected Redis client.
+        x_coreason_project_id (str): The project ID from the header.
+        token (str): The verified gateway access token.
+        _budget (None): Dependency trigger for budget validation.
+        x_coreason_trace_id (str | None): Optional trace ID for distributed tracing.
+
+    Returns:
+        Any: A ChatCompletion response or a StreamingResponse (SSE).
     """
     settings = get_settings()
 

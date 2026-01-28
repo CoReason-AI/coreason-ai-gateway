@@ -29,10 +29,13 @@ async def record_usage(
     Updates both the remaining budget and the total usage counter.
 
     Args:
-        project_id: The Project ID associated with the request.
-        usage: The usage statistics from the OpenAI response.
-        redis_client: The Async Redis client.
-        trace_id: Optional trace ID for distributed tracing logs.
+        project_id (str): The Project ID associated with the request.
+        usage (CompletionUsage | None): The usage statistics from the OpenAI response.
+        redis_client (Redis[Any]): The Async Redis client.
+        trace_id (str | None): Optional trace ID for distributed tracing logs.
+
+    Returns:
+        None
     """
     context = {}
     if trace_id:
