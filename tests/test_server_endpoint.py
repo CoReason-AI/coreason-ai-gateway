@@ -57,7 +57,9 @@ def mock_dependencies() -> Generator[dict[str, Any], None, None]:
         # Vault setup
         vault_instance = AsyncMock()
         mock_vault.return_value = vault_instance
-        vault_instance.authenticate = AsyncMock()
+        vault_instance.auth = AsyncMock()
+        vault_instance.auth.authenticate_approle = AsyncMock()
+        vault_instance.auth.close = AsyncMock()
         vault_instance.get_secret.return_value = {"api_key": "sk-test"}
 
         # OpenAI setup

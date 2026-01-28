@@ -61,7 +61,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     try:
         vault_config = CoreasonVaultConfig(VAULT_ADDR=str(settings.VAULT_ADDR))
         app.state.vault = VaultManagerAsync(config=vault_config)
-        await app.state.vault.authenticate(
+        await app.state.vault.auth.authenticate_approle(
             role_id=settings.VAULT_ROLE_ID,
             secret_id=settings.VAULT_SECRET_ID.get_secret_value(),
         )
@@ -86,7 +86,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     if hasattr(app.state, "vault"):
         try:
-            await app.state.vault.close()
+            await app.state.vault.auth.close()
             logger.info("Vault connection closed.")
         except Exception:
             logger.exception("Failed to close Vault connection")
