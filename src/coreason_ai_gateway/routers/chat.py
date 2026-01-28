@@ -39,6 +39,12 @@ from coreason_ai_gateway.middleware.auth import verify_gateway_token
 from coreason_ai_gateway.schemas import ChatCompletionRequest
 from coreason_ai_gateway.utils.logger import logger
 
+"""
+Chat completion router.
+Handles the main /v1/chat/completions endpoint.
+"""
+
+
 router = APIRouter()
 
 

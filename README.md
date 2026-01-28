@@ -2,9 +2,10 @@
 
 **The Central GenAI Security & Egress Proxy**
 
-[![License](https://img.shields.io/badge/License-Prosperity%203.0-blue)](https://github.com/CoReason-AI/coreason_ai_gateway/blob/main/LICENSE)
+[![License](https://img.shields.io/badge/license-Prosperity%203.0-blue)](https://github.com/CoReason-AI/coreason_ai_gateway/blob/main/LICENSE)
 [![CI/CD](https://github.com/CoReason-AI/coreason_ai_gateway/actions/workflows/ci-cd.yml/badge.svg)](https://github.com/CoReason-AI/coreason_ai_gateway/actions/workflows/ci-cd.yml)
 [![Ruff](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json)](https://github.com/astral-sh/ruff)
+[![Docs](https://img.shields.io/badge/docs-Product%20Requirements-informational)](docs/product_requirements.md)
 
 `coreason-ai-gateway` is a high-performance, asynchronous FastAPI microservice acting as the **sole egress point** for all Generative AI traffic within the CoReason ecosystem. It implements a "Hollow Proxy" architecture to enforce security, budget, and resilience policies.
 
@@ -40,6 +41,7 @@ import os
 from openai import OpenAI
 
 # Initialize the client pointing to the Gateway
+# Ensure GATEWAY_ACCESS_TOKEN is available
 client = OpenAI(
     base_url="http://localhost:8000/v1",
     api_key="gate_..." # Your GATEWAY_ACCESS_TOKEN
