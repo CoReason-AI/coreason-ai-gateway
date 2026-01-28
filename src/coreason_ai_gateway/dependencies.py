@@ -20,10 +20,24 @@ from coreason_ai_gateway.routing import resolve_provider_path
 from coreason_ai_gateway.schemas import ChatCompletionRequest
 from coreason_ai_gateway.utils.logger import logger
 
+"""
+FastAPI dependencies for dependency injection.
+Handles database connections, authentication, and service clients.
+"""
+
 
 def get_redis_client(request: Request) -> Redis:  # type: ignore[type-arg]
     """
     Dependency to retrieve the Redis client from app state.
+
+    Args:
+        request (Request): The incoming HTTP request.
+
+    Returns:
+        Redis: The initialized Redis client from app.state.
+
+    Raises:
+        RuntimeError: If the Redis client is not initialized in app state.
     """
     if not hasattr(request.app.state, "redis"):
         raise RuntimeError("Redis client is not initialized in app state")
@@ -33,6 +47,15 @@ def get_redis_client(request: Request) -> Redis:  # type: ignore[type-arg]
 def get_vault_client(request: Request) -> VaultManagerAsync:
     """
     Dependency to retrieve the Vault client from app state.
+
+    Args:
+        request (Request): The incoming HTTP request.
+
+    Returns:
+        VaultManagerAsync: The initialized Vault client from app.state.
+
+    Raises:
+        RuntimeError: If the Vault client is not initialized in app state.
     """
     if not hasattr(request.app.state, "vault"):
         raise RuntimeError("Vault client is not initialized in app state")
@@ -63,6 +86,17 @@ async def validate_request_budget(
     """
     Dependency that enforces budget limits for the incoming request.
     Calculates estimated cost and rejects if budget is insufficient.
+
+    Args:
+        body (ChatCompletionRequest): The parsed request body.
+        redis_client (RedisDep): The injected Redis client.
+        x_coreason_project_id (str): The project ID from the request header.
+
+    Returns:
+        None
+
+    Raises:
+        HTTPException: 402 Payment Required if budget is insufficient.
     """
     estimated_tokens = estimate_tokens(body.messages)
     await check_budget(x_coreason_project_id, estimated_tokens, redis_client)
@@ -75,6 +109,16 @@ async def get_upstream_client(
     """
     Dependency that provides an authenticated AsyncOpenAI client.
     Handles Just-In-Time secret retrieval and client lifecycle.
+
+    Args:
+        body (ChatCompletionRequest): The parsed request body.
+        vault_client (VaultDep): The injected Vault client.
+
+    Yields:
+        AsyncOpenAI: An authenticated OpenAI client instance.
+
+    Raises:
+        HTTPException: 503 Service Unavailable if secret retrieval fails or structure is invalid.
     """
     provider_path = resolve_provider_path(body.model)
     try:

@@ -13,6 +13,11 @@ from typing import Any, List, Optional
 from openai.types.chat import ChatCompletionMessageParam, ChatCompletionStreamOptionsParam
 from pydantic import BaseModel, Field
 
+"""
+Pydantic schemas for request and response validation.
+Mirrors OpenAI API types.
+"""
+
 
 class ChatCompletionRequest(BaseModel):
     """

@@ -16,6 +16,11 @@ from typing import Any
 from fastapi import HTTPException, status
 from redis.asyncio import Redis
 
+"""
+Budget middleware for enforcing financial limits.
+Checks estimated cost against Redis budget before processing.
+"""
+
 
 def estimate_tokens(messages: list[dict[str, Any]]) -> int:
     """
