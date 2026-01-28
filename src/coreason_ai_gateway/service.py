@@ -84,7 +84,7 @@ class ServiceAsync:
                     return response
         except Exception as e:
             raise e
-        raise RuntimeError("Retry loop finished without result")
+        raise RuntimeError("Retry loop finished without result")  # pragma: no cover
 
 
 class Service:
