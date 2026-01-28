@@ -10,75 +10,15 @@
 
 import json
 from typing import Any, AsyncGenerator, Generator
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 from fastapi.testclient import TestClient
 from openai.types.chat import ChatCompletionChunk
 
+from coreason_ai_gateway.middleware.accounting import record_usage
 from coreason_ai_gateway.server import app
 from coreason_ai_gateway.utils.logger import logger
-
-
-@pytest.fixture(autouse=True)
-def setup_env(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("VAULT_ADDR", "http://vault:8200")
-    monkeypatch.setenv("VAULT_ROLE_ID", "dummy-role-id")
-    monkeypatch.setenv("VAULT_SECRET_ID", "dummy-secret-id")
-    monkeypatch.setenv("REDIS_URL", "redis://redis:6379")
-    monkeypatch.setenv("GATEWAY_ACCESS_TOKEN", "valid-token")
-
-
-@pytest.fixture
-def mock_dependencies() -> Generator[dict[str, Any], None, None]:
-    with (
-        patch("coreason_ai_gateway.server.redis.from_url") as mock_redis,
-        patch("coreason_ai_gateway.server.VaultManagerAsync") as mock_vault,
-        patch("coreason_ai_gateway.server.CoreasonVaultConfig"),
-        patch("coreason_ai_gateway.dependencies.AsyncOpenAI") as mock_openai,
-    ):
-        # Redis setup
-        redis_instance = AsyncMock()
-        mock_redis.return_value = redis_instance
-        redis_instance.get.return_value = "1000"
-
-        # Mock Pipeline
-        # Use AsyncMock for the pipeline object itself, so its methods (execute, __aenter__) are async
-        pipeline_mock = AsyncMock()
-
-        # Configure __aenter__ to return the pipeline itself (for "async with pipeline as pipe")
-        pipeline_mock.__aenter__.return_value = pipeline_mock
-
-        # Capture the execute mock
-        execute_mock = pipeline_mock.execute
-
-        # Ensure decrby and incrby are MagicMock (synchronous) because pipeline methods queue commands
-        pipeline_mock.decrby = MagicMock()
-        pipeline_mock.incrby = MagicMock()
-
-        # FIX: Explicitly replace the pipeline attribute on redis_instance with a MagicMock (sync)
-        # because redis-py's pipeline() method is synchronous even in async mode.
-        # It returns our async pipeline_mock.
-        redis_instance.pipeline = MagicMock(return_value=pipeline_mock)
-
-        # Vault setup
-        vault_instance = AsyncMock()
-        mock_vault.return_value = vault_instance
-        vault_instance.authenticate = AsyncMock()
-        vault_instance.get_secret.return_value = {"api_key": "sk-test"}
-
-        # OpenAI setup
-        openai_client = AsyncMock()
-        mock_openai.return_value = openai_client
-
-        yield {
-            "redis": redis_instance,
-            "vault": vault_instance,
-            "openai": mock_openai,
-            "client": openai_client,
-            "pipeline": pipeline_mock,
-            "execute": execute_mock,
-        }
 
 
 @pytest.fixture
@@ -197,3 +137,30 @@ async def test_streaming_context_preservation(mock_dependencies: dict[str, Any],
                 break
 
     assert found_stream_log, "Log inside stream generator did not contain Trace ID. Context was lost."
+
+
+@pytest.mark.anyio
+async def test_accounting_pipeline_integrity(mock_dependencies: dict[str, Any]) -> None:
+    """
+    Verify that record_usage correctly queues commands on the pipeline
+    and executes them. This ensures mocks are wired correctly and logic is sound.
+    """
+    project_id = "proj-integrity"
+    usage = MagicMock()
+    usage.total_tokens = 42
+
+    pipeline_mock = mock_dependencies["pipeline"]
+    redis_client = mock_dependencies["redis"]
+
+    # Manually invoke record_usage to verify pipeline interaction
+    await record_usage(project_id, usage, redis_client, trace_id="trace-integrity")
+
+    # Verify pipeline was created
+    redis_client.pipeline.assert_called_once()
+
+    # Verify commands
+    pipeline_mock.decrby.assert_called_once_with(f"budget:{project_id}:remaining", 42)
+    pipeline_mock.incrby.assert_called_once_with(f"usage:{project_id}:total", 42)
+
+    # Verify execute
+    pipeline_mock.execute.assert_awaited_once()

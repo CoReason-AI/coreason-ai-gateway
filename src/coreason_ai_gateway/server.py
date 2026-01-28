@@ -9,38 +9,15 @@
 # Source Code: https://github.com/CoReason-AI/coreason_ai_gateway
 
 from contextlib import asynccontextmanager
-from typing import Annotated, Any, AsyncIterator
+from typing import AsyncIterator
 
 from coreason_vault import CoreasonVaultConfig, VaultManagerAsync
-from fastapi import (
-    BackgroundTasks,
-    Depends,
-    FastAPI,
-    Header,
-    Request,
-)
-from fastapi.responses import StreamingResponse
-from openai import (
-    APIConnectionError,
-    AsyncOpenAI,
-    InternalServerError,
-    RateLimitError,
-)
+from fastapi import FastAPI
 from redis import asyncio as redis
-from tenacity import (
-    AsyncRetrying,
-    retry_if_exception_type,
-    stop_after_attempt,
-    stop_after_delay,
-    wait_exponential,
-)
 
 from .config import get_settings
-from .dependencies import RedisDep, get_upstream_client, validate_request_budget
 from .exception_handlers import register_exception_handlers
-from .middleware.accounting import record_usage
-from .middleware.auth import verify_gateway_token
-from .schemas import ChatCompletionRequest
+from .routers.chat import router as chat_router
 from .utils.logger import logger
 
 
@@ -61,7 +38,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     try:
         vault_config = CoreasonVaultConfig(VAULT_ADDR=str(settings.VAULT_ADDR))
         app.state.vault = VaultManagerAsync(config=vault_config)
-        await app.state.vault.authenticate(
+        await app.state.vault.auth.authenticate_approle(
             role_id=settings.VAULT_ROLE_ID,
             secret_id=settings.VAULT_SECRET_ID.get_secret_value(),
         )
@@ -86,7 +63,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     if hasattr(app.state, "vault"):
         try:
-            await app.state.vault.close()
+            await app.state.vault.auth.close()
             logger.info("Vault connection closed.")
         except Exception:
             logger.exception("Failed to close Vault connection")
@@ -95,6 +72,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 app = FastAPI(title="Coreason AI Gateway", lifespan=lifespan)
 register_exception_handlers(app)
 
+# Include Routers
+app.include_router(chat_router)
+
 
 @app.get("/health")
 async def health_check() -> dict[str, str]:
@@ -102,92 +82,3 @@ async def health_check() -> dict[str, str]:
     Health check endpoint to verify service status.
     """
     return {"status": "ok"}
-
-
-@app.post("/v1/chat/completions", status_code=200)
-async def chat_completions(
-    request: Request,
-    body: ChatCompletionRequest,
-    background_tasks: BackgroundTasks,
-    client: Annotated[AsyncOpenAI, Depends(get_upstream_client)],
-    redis_client: RedisDep,
-    x_coreason_project_id: Annotated[str, Header()],
-    token: Annotated[str, Depends(verify_gateway_token)],
-    _budget: Annotated[None, Depends(validate_request_budget)],
-    x_coreason_trace_id: Annotated[str | None, Header()] = None,
-) -> Any:
-    """
-    Proxies chat completion requests to LLM providers.
-    Enforces authentication, budgeting, and JIT secret injection via dependencies.
-    """
-    settings = get_settings()
-
-    context = {}
-    if x_coreason_trace_id:
-        context["trace_id"] = x_coreason_trace_id
-
-    with logger.contextualize(**context):
-        # Upstream Execution (with Retry)
-        # Note: Client instantiation and Vault retrieval are now handled by `client` dependency.
-        # Budget check is handled by `_budget` dependency.
-
-        # We rely on FastAPI dependency teardown to close the client.
-        # However, for streaming response, we need to ensure the client stays open
-        # until the stream is consumed. FastAPI dependency teardown happens AFTER
-        # the response is sent. So yielding the client in dependency is correct.
-
-        try:
-            # Prepare arguments
-            kwargs = body.model_dump(exclude_unset=True)
-
-            async for attempt in AsyncRetrying(
-                stop=(
-                    stop_after_attempt(settings.RETRY_STOP_AFTER_ATTEMPT)
-                    | stop_after_delay(settings.RETRY_STOP_AFTER_DELAY)
-                ),
-                wait=wait_exponential(multiplier=1, min=settings.RETRY_WAIT_MIN, max=settings.RETRY_WAIT_MAX),
-                retry=retry_if_exception_type((RateLimitError, APIConnectionError, InternalServerError)),
-                reraise=True,
-            ):
-                with attempt:
-                    response = await client.chat.completions.create(**kwargs)
-
-        except Exception as e:
-            # Exceptions are handled by global handlers or retried.
-            # Client closing is handled by dependency teardown.
-            raise e
-
-        # Handle Response
-        if body.stream:
-
-            async def stream_generator() -> AsyncIterator[str]:
-                # Re-apply logger context for the stream generator duration
-                with logger.contextualize(**context):
-                    usage = None
-                    try:
-                        # response is an AsyncStream
-                        async for chunk in response:
-                            # Capture usage if available (OpenAI stream_options)
-                            if hasattr(chunk, "usage") and chunk.usage:
-                                usage = chunk.usage
-
-                            yield f"data: {chunk.model_dump_json()}\n\n"
-                        yield "data: [DONE]\n\n"
-                    finally:
-                        # Client close handled by dependency teardown
-                        if usage:
-                            await record_usage(x_coreason_project_id, usage, redis_client, trace_id=x_coreason_trace_id)
-
-            return StreamingResponse(stream_generator(), media_type="text/event-stream")
-
-        else:
-            # response is ChatCompletion
-            # Client close handled by dependency teardown
-            background_tasks.add_task(
-                record_usage,
-                x_coreason_project_id,
-                response.usage,
-                redis_client,
-                trace_id=x_coreason_trace_id,
-            )
-            return response
