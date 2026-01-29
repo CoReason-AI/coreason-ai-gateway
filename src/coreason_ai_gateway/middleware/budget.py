@@ -15,6 +15,7 @@ from typing import Any
 
 from fastapi import HTTPException, status
 from redis.asyncio import Redis
+from coreason_identity.models import UserContext
 
 """
 Budget middleware for enforcing financial limits.
@@ -41,27 +42,28 @@ def estimate_tokens(messages: list[dict[str, Any]]) -> int:
         return len(str(messages)) // 4
 
 
-async def check_budget(project_id: str, estimated_cost: int, redis_client: Redis[Any]) -> None:
+async def check_budget(context: UserContext, estimated_cost: int, redis_client: Redis[Any]) -> None:
     """
-    Checks if the project has sufficient budget.
+    Checks if the user has sufficient budget.
     Raises HTTPException(402) if budget is insufficient or missing.
 
     Args:
-        project_id (str): The Project ID from headers.
+        context (UserContext): The User Context containing identity.
         estimated_cost (int): The estimated token cost.
         redis_client (Redis[Any]): The Async Redis client.
 
     Raises:
         HTTPException: 402 Payment Required if budget < cost.
     """
-    key = f"budget:{project_id}:remaining"
+    user_id = context.sub
+    key = f"budget:{user_id}:remaining"
     remaining = await redis_client.get(key)
 
     if remaining is None:
         # Fail Secure: No budget key means 0 budget.
         raise HTTPException(
             status_code=status.HTTP_402_PAYMENT_REQUIRED,
-            detail=f"Budget exceeded for Project ID {project_id}",
+            detail=f"Budget exceeded for User ID {user_id}",
         )
 
     try:
@@ -70,11 +72,11 @@ async def check_budget(project_id: str, estimated_cost: int, redis_client: Redis
         # Corrupted data acts as 0 budget
         raise HTTPException(
             status_code=status.HTTP_402_PAYMENT_REQUIRED,
-            detail=f"Budget exceeded for Project ID {project_id}",
+            detail=f"Budget exceeded for User ID {user_id}",
         ) from None
 
     if remaining_int < estimated_cost:
         raise HTTPException(
             status_code=status.HTTP_402_PAYMENT_REQUIRED,
-            detail=f"Budget exceeded for Project ID {project_id}",
+            detail=f"Budget exceeded for User ID {user_id}",
         )

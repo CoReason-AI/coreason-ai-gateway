@@ -16,12 +16,13 @@ from fastapi import (
     Depends,
     Header,
     Request,
+    HTTPException,
+    status,
 )
 from fastapi.responses import StreamingResponse
 
 from coreason_ai_gateway.dependencies import RedisDep, get_service, get_upstream_api_key, validate_request_budget
 from coreason_ai_gateway.middleware.accounting import record_usage
-from coreason_ai_gateway.middleware.auth import verify_gateway_token
 from coreason_ai_gateway.schemas import ChatCompletionRequest
 from coreason_ai_gateway.service import ServiceAsync
 from coreason_ai_gateway.utils.logger import logger
@@ -43,8 +44,6 @@ async def chat_completions(
     service: Annotated[ServiceAsync, Depends(get_service)],
     api_key: Annotated[str, Depends(get_upstream_api_key)],
     redis_client: RedisDep,
-    x_coreason_project_id: Annotated[str, Header()],
-    token: Annotated[str, Depends(verify_gateway_token)],
     _budget: Annotated[None, Depends(validate_request_budget)],
     x_coreason_trace_id: Annotated[str | None, Header()] = None,
 ) -> Any:
@@ -59,17 +58,25 @@ async def chat_completions(
         service (ServiceAsync): Injected core service.
         api_key (str): Injected upstream API Key.
         redis_client (Redis): Injected Redis client.
-        x_coreason_project_id (str): The project ID from the header.
-        token (str): The verified gateway access token.
         _budget (None): Dependency trigger for budget validation.
         x_coreason_trace_id (str | None): Optional trace ID for distributed tracing.
 
     Returns:
         Any: A ChatCompletion response or a StreamingResponse (SSE).
     """
+    if not hasattr(request.state, "user_context"):
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="User Context Missing",
+        )
+    user_context = request.state.user_context
+
     context = {}
     if x_coreason_trace_id:
         context["trace_id"] = x_coreason_trace_id
+
+    # Add identity to logger context
+    context["user_id"] = user_context.sub
 
     with logger.contextualize(**context):
         # Upstream Execution (via ServiceAsync)
@@ -77,7 +84,7 @@ async def chat_completions(
         # Budget check is handled by `_budget` dependency.
 
         try:
-            response = await service.chat_completions(body, api_key)
+            response = await service.chat_completions(body, api_key, user_context)
 
         except Exception as e:
             # Exceptions are handled by global handlers or retried in service.
@@ -101,7 +108,7 @@ async def chat_completions(
                         yield "data: [DONE]\n\n"
                     finally:
                         if usage:
-                            await record_usage(x_coreason_project_id, usage, redis_client, trace_id=x_coreason_trace_id)
+                            await record_usage(user_context, usage, redis_client, trace_id=x_coreason_trace_id)
 
             return StreamingResponse(stream_generator(), media_type="text/event-stream")
 
@@ -109,7 +116,7 @@ async def chat_completions(
             # response is ChatCompletion
             background_tasks.add_task(
                 record_usage,
-                x_coreason_project_id,
+                user_context,
                 response.usage,  # type: ignore
                 redis_client,
                 trace_id=x_coreason_trace_id,

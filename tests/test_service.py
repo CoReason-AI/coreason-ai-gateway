@@ -3,6 +3,7 @@ from typing import Any
 import httpx
 import pytest
 from openai.types.chat import ChatCompletion
+from coreason_identity.models import UserContext
 
 from coreason_ai_gateway.schemas import ChatCompletionRequest
 from coreason_ai_gateway.service import Service, ServiceAsync
@@ -33,8 +34,9 @@ async def test_service_async_chat_completions(respx_mock: Any) -> None:
     )
 
     async with ServiceAsync() as svc:
+        context = UserContext(sub="user-123", email="test@example.com")
         req = ChatCompletionRequest(model="gpt-4", messages=[{"role": "user", "content": "hi"}])
-        resp = await svc.chat_completions(req, api_key="sk-test")
+        resp = await svc.chat_completions(req, api_key="sk-test", context=context)
 
         assert isinstance(resp, ChatCompletion)
         assert resp.choices[0].message.content == "Hello there!"
@@ -65,8 +67,9 @@ def test_service_sync_chat_completions(respx_mock: Any) -> None:
     )
 
     with Service() as svc:
+        context = UserContext(sub="user-123", email="test@example.com")
         req = ChatCompletionRequest(model="gpt-4", messages=[{"role": "user", "content": "hi"}])
-        resp = svc.chat_completions(req, api_key="sk-test")
+        resp = svc.chat_completions(req, api_key="sk-test", context=context)
 
         assert isinstance(resp, ChatCompletion)
         assert resp.choices[0].message.content == "Hello sync!"
@@ -86,8 +89,9 @@ async def test_service_async_streaming(respx_mock: Any) -> None:
     )
 
     async with ServiceAsync() as svc:
+        context = UserContext(sub="user-123", email="test@example.com")
         req = ChatCompletionRequest(model="gpt-4", messages=[{"role": "user", "content": "hi"}], stream=True)
-        resp = await svc.chat_completions(req, api_key="sk-test")
+        resp = await svc.chat_completions(req, api_key="sk-test", context=context)
 
         chunks = []
         # resp should be AsyncIterator
@@ -114,8 +118,9 @@ def test_service_sync_streaming_buffered(respx_mock: Any) -> None:
     )
 
     with Service() as svc:
+        context = UserContext(sub="user-123", email="test@example.com")
         req = ChatCompletionRequest(model="gpt-4", messages=[{"role": "user", "content": "hi"}], stream=True)
-        resp_iter = svc.chat_completions(req, api_key="sk-test")
+        resp_iter = svc.chat_completions(req, api_key="sk-test", context=context)
 
         # It should be an iterator of chunks
         chunks = []

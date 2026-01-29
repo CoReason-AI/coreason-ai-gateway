@@ -17,6 +17,7 @@ from redis import asyncio as redis
 
 from .config import get_settings
 from .exception_handlers import register_exception_handlers
+from .middleware.auth import AuthMiddleware
 from .routers.chat import router as chat_router
 from .utils.logger import logger
 
@@ -103,6 +104,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
 
 app = FastAPI(title="Coreason AI Gateway", lifespan=lifespan)
+app.add_middleware(AuthMiddleware)
 register_exception_handlers(app)
 
 # Include Routers

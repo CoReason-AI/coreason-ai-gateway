@@ -15,6 +15,7 @@ from unittest.mock import MagicMock
 import pytest
 from fastapi.testclient import TestClient
 from openai.types.chat import ChatCompletionChunk
+from coreason_identity.models import UserContext
 
 from coreason_ai_gateway.middleware.accounting import record_usage
 from coreason_ai_gateway.server import app
@@ -153,7 +154,8 @@ async def test_accounting_pipeline_integrity(mock_dependencies: dict[str, Any]) 
     redis_client = mock_dependencies["redis"]
 
     # Manually invoke record_usage to verify pipeline interaction
-    await record_usage(project_id, usage, redis_client, trace_id="trace-integrity")
+    context = UserContext(sub=project_id, email="test@example.com")
+    await record_usage(context, usage, redis_client, trace_id="trace-integrity")
 
     # Verify pipeline was created
     redis_client.pipeline.assert_called_once()

@@ -26,11 +26,20 @@ def test_auth_failure(client: TestClient) -> None:
     assert response.status_code == 401
 
 
-def test_missing_project_id(client: TestClient) -> None:
+def test_optional_project_id(mock_dependencies: dict[str, Any], client: TestClient) -> None:
+    # Prepare success response
+    mock_response = MagicMock()
+    mock_response.usage.total_tokens = 10
+    mock_response.model_dump.return_value = {"id": "123", "choices": []}
+    mock_dependencies["client"].chat.completions.create.return_value = mock_response
+
+    # Request without Project ID header should succeed
     response = client.post(
-        "/v1/chat/completions", json={"model": "gpt-4", "messages": []}, headers={"Authorization": "Bearer valid-token"}
+        "/v1/chat/completions",
+        json={"model": "gpt-4", "messages": []},
+        headers={"Authorization": "Bearer valid-token"}
     )
-    assert response.status_code == 422  # Missing header
+    assert response.status_code == 200
 
 
 def test_budget_failure(mock_dependencies: dict[str, Any], client: TestClient) -> None:

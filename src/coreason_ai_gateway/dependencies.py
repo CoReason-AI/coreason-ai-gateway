@@ -97,27 +97,36 @@ VaultDep = Annotated[VaultManagerAsync, Depends(get_vault_client)]
 
 
 async def validate_request_budget(
+    request: Request,
     body: ChatCompletionRequest,
     redis_client: RedisDep,
-    x_coreason_project_id: Annotated[str, Header()],
 ) -> None:
     """
     Dependency that enforces budget limits for the incoming request.
     Calculates estimated cost and rejects if budget is insufficient.
 
     Args:
+        request (Request): The incoming request (for accessing user context).
         body (ChatCompletionRequest): The parsed request body.
         redis_client (RedisDep): The injected Redis client.
-        x_coreason_project_id (str): The project ID from the request header.
 
     Returns:
         None
 
     Raises:
         HTTPException: 402 Payment Required if budget is insufficient.
+        HTTPException: 500 if UserContext is missing.
     """
+    if not hasattr(request.state, "user_context"):
+        # Should be caught by middleware, but defensive check
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="User Context Missing",
+        )
+
+    context = request.state.user_context
     estimated_tokens = estimate_tokens(body.messages)
-    await check_budget(x_coreason_project_id, estimated_tokens, redis_client)
+    await check_budget(context, estimated_tokens, redis_client)
 
 
 async def get_upstream_api_key(

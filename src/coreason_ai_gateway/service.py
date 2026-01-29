@@ -15,9 +15,11 @@ import httpx
 from openai import APIConnectionError, AsyncOpenAI, InternalServerError, RateLimitError
 from openai.types.chat import ChatCompletion, ChatCompletionChunk
 from tenacity import AsyncRetrying, retry_if_exception_type, stop_after_attempt, stop_after_delay, wait_exponential
+from coreason_identity.models import UserContext
 
 from coreason_ai_gateway.config import get_settings
 from coreason_ai_gateway.schemas import ChatCompletionRequest
+from coreason_ai_gateway.utils.logger import logger
 
 
 class ServiceAsync:
@@ -49,6 +51,7 @@ class ServiceAsync:
         self,
         request: ChatCompletionRequest,
         api_key: str,
+        context: UserContext,
     ) -> Union[ChatCompletion, AsyncIterator[ChatCompletionChunk]]:
         """
         Execute a chat completion request against the upstream provider.
@@ -58,11 +61,15 @@ class ServiceAsync:
         Args:
             request (ChatCompletionRequest): The request model.
             api_key (str): The API key for the provider.
+            context (UserContext): The authenticated user context.
 
         Returns:
             Union[ChatCompletion, AsyncIterator[ChatCompletionChunk]]: The response from OpenAI.
         """
         settings = get_settings()
+
+        # Log the proxy event
+        logger.info("Proxying LLM request", user_id=context.sub, model=request.model)
 
         # Initialize OpenAI client with the shared httpx client
         client = AsyncOpenAI(api_key=api_key, http_client=self._client, max_retries=0)
@@ -113,6 +120,7 @@ class Service:
         self,
         request: ChatCompletionRequest,
         api_key: str,
+        context: UserContext,
     ) -> Union[ChatCompletion, Iterator[ChatCompletionChunk]]:
         """
         Synchronous wrapper for chat_completions.
@@ -122,7 +130,7 @@ class Service:
         """
 
         async def wrapper() -> Union[ChatCompletion, list[ChatCompletionChunk]]:
-            response = await self._async.chat_completions(request, api_key)
+            response = await self._async.chat_completions(request, api_key, context)
             if request.stream:
                 # We must consume the stream while the loop is open
                 chunks = []
