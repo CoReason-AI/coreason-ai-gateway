@@ -13,9 +13,10 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 import respx
-from coreason_ai_gateway.server import app
 from fastapi.testclient import TestClient
 from httpx import Response
+
+from coreason_ai_gateway.server import app
 
 
 @pytest.fixture

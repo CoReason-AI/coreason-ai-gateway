@@ -12,10 +12,11 @@ import hashlib
 from unittest.mock import patch
 
 import pytest
-from coreason_ai_gateway.middleware.auth import AuthMiddleware, verify_gateway_token
 from fastapi import HTTPException, Request, Response
 from pydantic import SecretStr
 from starlette.types import Receive, Scope, Send
+
+from coreason_ai_gateway.middleware.auth import AuthMiddleware, verify_gateway_token
 
 
 @pytest.fixture

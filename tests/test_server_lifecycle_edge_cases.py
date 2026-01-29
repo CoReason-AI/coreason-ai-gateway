@@ -12,8 +12,9 @@ import os
 from unittest.mock import AsyncMock, patch
 
 import pytest
-from coreason_ai_gateway.server import lifespan
 from fastapi import FastAPI
+
+from coreason_ai_gateway.server import lifespan
 
 # Set environment variables for config (required for get_settings call inside lifespan)
 os.environ["VAULT_ADDR"] = "http://vault:8200"
