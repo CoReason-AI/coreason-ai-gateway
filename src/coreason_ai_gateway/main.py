@@ -12,6 +12,10 @@ import uvicorn
 
 from .server import app
 
+"""
+Application entry point.
+"""
+
 
 def main() -> None:
     """
@@ -21,4 +25,4 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    main()  # pragma: no cover
