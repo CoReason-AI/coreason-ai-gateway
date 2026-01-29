@@ -20,6 +20,11 @@ RUN python -m build --wheel --outdir /wheels
 # Stage 2: Runtime
 FROM python:3.12-slim AS runtime
 
+# Install curl for healthcheck
+# hadolint ignore=DL3008
+RUN apt-get update && apt-get install -y --no-install-recommends curl \
+    && rm -rf /var/lib/apt/lists/*
+
 # Create a non-root user
 RUN useradd --create-home --shell /bin/bash appuser
 USER appuser
@@ -35,3 +40,6 @@ COPY --from=builder /wheels /wheels
 
 # Install the application wheel
 RUN pip install --no-cache-dir /wheels/*.whl
+
+# Healthcheck
+HEALTHCHECK CMD curl -f http://localhost:8000/health || exit 1
