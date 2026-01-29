@@ -105,6 +105,17 @@ async def test_service_async_streaming(respx_mock: Any) -> None:
 
         assert "".join(chunks) == "Hello world"
 
+        # Ensure we close the generator if it's still open?
+        # The 'async for' loop exhausts the iterator, so it should be closed.
+        # However, pytest-asyncio sometimes warns if 'aclose' isn't explicitly checked or if the underlying
+        # response isn't closed.
+        # httpx response in 'respx' mock handles this usually.
+        # The warning "RuntimeWarning: coroutine method 'aclose' of 'AsyncStream._iter_events' was never awaited"
+        # suggests that the OpenAI AsyncStream needs explicit closing or context management?
+        # The OpenAI client usually handles this if we use `stream=True` in a context manager,
+        # but here we are returning the stream object.
+        # The test consumes it fully.
+
 
 def test_service_sync_streaming_buffered(respx_mock: Any) -> None:
     mock_content = (

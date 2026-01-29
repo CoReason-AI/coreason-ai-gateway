@@ -9,14 +9,14 @@
 # Source Code: https://github.com/CoReason-AI/coreason_ai_gateway
 
 from typing import Any, AsyncGenerator
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
+from coreason_ai_gateway.server import app  # noqa: E402
+from fastapi import HTTPException, Request, Response
 from fastapi.testclient import TestClient
 from openai import APIConnectionError, RateLimitError
 from openai.types.chat import ChatCompletionChunk
-
-from coreason_ai_gateway.server import app  # noqa: E402
 
 
 def test_auth_failure(client: TestClient) -> None:
@@ -322,3 +322,47 @@ async def test_complex_streaming_scenario(mock_dependencies: dict[str, Any]) -> 
         assert call_args.kwargs.get("tools") == tools
         assert call_args.kwargs.get("tool_choice") == "auto"
         assert call_args.kwargs.get("stop") == ["STOP"]
+
+
+@pytest.mark.anyio
+async def test_router_missing_user_context_defensive_check(mock_dependencies: dict[str, Any]) -> None:
+    """
+    Test the defensive check in the router where user_context is missing from request.state.
+    We need to bypass the middleware to trigger this, or mock the middleware to NOT set it.
+    """
+    # We can use a side_effect on the request.state.user_context access or just remove it in a dependency override?
+    # Easier: Mock the request object passed to the endpoint function directly?
+    # Or, since we are using TestClient, we rely on the app stack.
+    # The AuthMiddleware runs before the router. If AuthMiddleware succeeds, context is set.
+    # To test the router check, we need to bypass AuthMiddleware or make it fail to set context but NOT return 401?
+    # That's impossible with current middleware logic (it sets context or raises 401).
+    # SO, this code is unreachable in normal flow, hence "Defensive".
+    # To test it, we must mock the `request` object in a direct call to the endpoint function, OR use a dependency override
+    # that deletes the context? No, dependency runs after middleware.
+
+    # We will use `patch` to simulate the endpoint function execution environment or just call the function directly?
+    # Calling the function directly is the most robust way to unit test the router logic in isolation.
+
+    from coreason_ai_gateway.routers.chat import chat_completions
+
+    # Mock Request
+    req = MagicMock(spec=Request)
+    req.state = MagicMock()
+    # Explicitly remove user_context
+    if hasattr(req.state, "user_context"):
+        del req.state.user_context
+
+    # Call endpoint directly
+    with pytest.raises(HTTPException) as exc:
+        await chat_completions(
+            request=req,
+            body=MagicMock(),
+            background_tasks=MagicMock(),
+            service=MagicMock(),
+            api_key="key",
+            redis_client=MagicMock(),
+            _budget=None,
+        )
+
+    assert exc.value.status_code == 500
+    assert exc.value.detail == "User Context Missing"
