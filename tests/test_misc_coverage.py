@@ -12,14 +12,13 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from fastapi import HTTPException
-from openai.types import CompletionUsage
-from coreason_identity.models import UserContext
-
 from coreason_ai_gateway.middleware.accounting import record_usage
 from coreason_ai_gateway.middleware.auth import verify_gateway_token
 from coreason_ai_gateway.middleware.budget import check_budget, estimate_tokens
 from coreason_ai_gateway.routing import resolve_provider_path
+from coreason_identity.models import UserContext
+from fastapi import HTTPException
+from openai.types import CompletionUsage
 
 
 def test_routing_coverage() -> None:

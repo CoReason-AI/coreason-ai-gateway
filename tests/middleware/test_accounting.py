@@ -12,11 +12,10 @@ import asyncio
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from coreason_ai_gateway.middleware.accounting import record_usage
+from coreason_identity.models import UserContext
 from openai.types import CompletionUsage
 from redis.exceptions import ConnectionError, RedisError
-from coreason_identity.models import UserContext
-
-from coreason_ai_gateway.middleware.accounting import record_usage
 
 
 @pytest.fixture
@@ -123,10 +122,12 @@ async def test_record_usage_complex_project_id(mock_redis: MagicMock) -> None:
 async def test_record_usage_concurrency(mock_redis: MagicMock) -> None:
     """Test concurrent execution of multiple usage records."""
     usage = CompletionUsage(completion_tokens=5, prompt_tokens=5, total_tokens=10)
-    context = lambda i: UserContext(sub=f"proj-{i}", email="test@example.com")
+
+    def get_context(i: int) -> UserContext:
+        return UserContext(sub=f"proj-{i}", email="test@example.com")
 
     # Run 5 concurrent calls
-    tasks = [record_usage(context(i), usage, mock_redis) for i in range(5)]
+    tasks = [record_usage(get_context(i), usage, mock_redis) for i in range(5)]
     await asyncio.gather(*tasks)
 
     assert mock_redis.pipeline.call_count == 5

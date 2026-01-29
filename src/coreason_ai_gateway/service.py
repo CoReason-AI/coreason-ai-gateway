@@ -12,10 +12,10 @@ from typing import Any, AsyncIterator, Iterator, Optional, Union
 
 import anyio
 import httpx
+from coreason_identity.models import UserContext
 from openai import APIConnectionError, AsyncOpenAI, InternalServerError, RateLimitError
 from openai.types.chat import ChatCompletion, ChatCompletionChunk
 from tenacity import AsyncRetrying, retry_if_exception_type, stop_after_attempt, stop_after_delay, wait_exponential
-from coreason_identity.models import UserContext
 
 from coreason_ai_gateway.config import get_settings
 from coreason_ai_gateway.schemas import ChatCompletionRequest

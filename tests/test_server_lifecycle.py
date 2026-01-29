@@ -13,6 +13,7 @@ from typing import Generator
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from coreason_ai_gateway.server import app
 from fastapi.testclient import TestClient
 
 # Set environment variables for config
@@ -21,8 +22,6 @@ os.environ["VAULT_ROLE_ID"] = "dummy-role-id"
 os.environ["VAULT_SECRET_ID"] = "dummy-secret-id"
 os.environ["REDIS_URL"] = "redis://redis:6379"
 os.environ["GATEWAY_ACCESS_TOKEN"] = "dummy-token"
-
-from coreason_ai_gateway.server import app  # noqa: E402
 
 
 @pytest.fixture
@@ -62,11 +61,19 @@ async def test_lifespan(mock_redis_patch: MagicMock, mock_vault_patch: MagicMock
         # Assert Redis initialized
         assert app.state.redis is mock_redis_patch.return_value
 
-        # Assert Vault initialized and authenticated
+        # Assert Vault initialized
+        # Config should be created with role_id/secret_id
+        # Note: Pydantic Settings/AnyUrl might add a trailing slash to the URL if path is empty.
+        # We check mostly for correct structure.
+        mock_vault_config.assert_called_once()
+        call_kwargs = mock_vault_config.call_args.kwargs
+        assert str(call_kwargs["VAULT_ADDR"]).rstrip("/") == "http://vault:8200"
+        assert call_kwargs["VAULT_ROLE_ID"] == "dummy-role-id"
+        assert call_kwargs["VAULT_SECRET_ID"] == "dummy-secret-id"
+
         assert app.state.vault is mock_vault_patch.return_value
-        mock_vault_patch.return_value.auth.authenticate_approle.assert_awaited_once_with(
-            role_id="dummy-role-id", secret_id="dummy-secret-id"
-        )
+        # No explicit auth call should be made
+        mock_vault_patch.return_value.auth.authenticate_approle.assert_not_called()
 
     # Assert teardown
     mock_redis_patch.return_value.close.assert_awaited_once()
@@ -87,11 +94,10 @@ async def test_lifespan_redis_failure(mock_redis_patch: MagicMock) -> None:
 async def test_lifespan_vault_failure(
     mock_redis_patch: MagicMock, mock_vault_patch: MagicMock, mock_vault_config: MagicMock
 ) -> None:
-    # Mock vault authentication raising exception
-    # Note: VaultManagerAsync(...) succeeds, but authenticate() fails
-    mock_vault_patch.return_value.auth.authenticate_approle.side_effect = Exception("Vault auth failed")
+    # Mock vault init raising exception (e.g. config issue or internal setup)
+    mock_vault_patch.side_effect = Exception("Vault init failed")
 
-    with pytest.raises(Exception, match="Vault auth failed"):
+    with pytest.raises(Exception, match="Vault init failed"):
         async with app.router.lifespan_context(app):
             pass
 

@@ -12,9 +12,9 @@ from __future__ import annotations
 
 from typing import Any
 
+from coreason_identity.models import UserContext
 from openai.types import CompletionUsage
 from redis.asyncio import Redis
-from coreason_identity.models import UserContext
 
 from coreason_ai_gateway.utils.logger import logger
 

@@ -2,11 +2,10 @@ from typing import Any
 
 import httpx
 import pytest
-from openai.types.chat import ChatCompletion
-from coreason_identity.models import UserContext
-
 from coreason_ai_gateway.schemas import ChatCompletionRequest
 from coreason_ai_gateway.service import Service, ServiceAsync
+from coreason_identity.models import UserContext
+from openai.types.chat import ChatCompletion
 
 
 @pytest.mark.anyio

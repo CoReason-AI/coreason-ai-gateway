@@ -57,13 +57,14 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     # 2. Setup Vault
     try:
-        vault_config = CoreasonVaultConfig(VAULT_ADDR=str(settings.VAULT_ADDR))
-        app.state.vault = VaultManagerAsync(config=vault_config)
-        await app.state.vault.auth.authenticate_approle(
-            role_id=settings.VAULT_ROLE_ID,
-            secret_id=settings.VAULT_SECRET_ID.get_secret_value(),
+        vault_config = CoreasonVaultConfig(
+            VAULT_ADDR=str(settings.VAULT_ADDR),
+            VAULT_ROLE_ID=settings.VAULT_ROLE_ID,
+            VAULT_SECRET_ID=settings.VAULT_SECRET_ID.get_secret_value(),
         )
-        logger.info("Vault client authenticated.")
+        app.state.vault = VaultManagerAsync(config=vault_config)
+        # Authentication is handled automatically by VaultManagerAsync when credentials are provided
+        logger.info("Vault client initialized.")
     except Exception as e:
         logger.exception("Failed to initialize Vault client")
         # Ensure redis is closed if vault fails

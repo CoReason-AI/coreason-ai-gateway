@@ -12,11 +12,10 @@ from typing import Any, AsyncGenerator
 from unittest.mock import MagicMock
 
 import pytest
+from coreason_ai_gateway.server import app  # noqa: E402
 from fastapi.testclient import TestClient
 from openai import APIConnectionError, RateLimitError
 from openai.types.chat import ChatCompletionChunk
-
-from coreason_ai_gateway.server import app  # noqa: E402
 
 
 def test_auth_failure(client: TestClient) -> None:
@@ -35,9 +34,7 @@ def test_optional_project_id(mock_dependencies: dict[str, Any], client: TestClie
 
     # Request without Project ID header should succeed
     response = client.post(
-        "/v1/chat/completions",
-        json={"model": "gpt-4", "messages": []},
-        headers={"Authorization": "Bearer valid-token"}
+        "/v1/chat/completions", json={"model": "gpt-4", "messages": []}, headers={"Authorization": "Bearer valid-token"}
     )
     assert response.status_code == 200
 

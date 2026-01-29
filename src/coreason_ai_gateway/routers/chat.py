@@ -10,22 +10,21 @@
 
 from typing import Annotated, Any, AsyncIterator
 
-from fastapi import (
-    APIRouter,
-    BackgroundTasks,
-    Depends,
-    Header,
-    Request,
-    HTTPException,
-    status,
-)
-from fastapi.responses import StreamingResponse
-
 from coreason_ai_gateway.dependencies import RedisDep, get_service, get_upstream_api_key, validate_request_budget
 from coreason_ai_gateway.middleware.accounting import record_usage
 from coreason_ai_gateway.schemas import ChatCompletionRequest
 from coreason_ai_gateway.service import ServiceAsync
 from coreason_ai_gateway.utils.logger import logger
+from fastapi import (
+    APIRouter,
+    BackgroundTasks,
+    Depends,
+    Header,
+    HTTPException,
+    Request,
+    status,
+)
+from fastapi.responses import StreamingResponse
 
 """
 Chat completion router.

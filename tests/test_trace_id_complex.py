@@ -13,13 +13,12 @@ from typing import Any, AsyncGenerator, Generator
 from unittest.mock import MagicMock
 
 import pytest
-from fastapi.testclient import TestClient
-from openai.types.chat import ChatCompletionChunk
-from coreason_identity.models import UserContext
-
 from coreason_ai_gateway.middleware.accounting import record_usage
 from coreason_ai_gateway.server import app
 from coreason_ai_gateway.utils.logger import logger
+from coreason_identity.models import UserContext
+from fastapi.testclient import TestClient
+from openai.types.chat import ChatCompletionChunk
 
 
 @pytest.fixture

@@ -13,9 +13,9 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from coreason_identity.models import UserContext
 from fastapi import HTTPException, status
 from redis.asyncio import Redis
-from coreason_identity.models import UserContext
 
 """
 Budget middleware for enforcing financial limits.

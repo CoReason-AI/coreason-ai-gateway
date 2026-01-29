@@ -11,7 +11,7 @@
 from typing import TYPE_CHECKING, Annotated, Any
 
 from coreason_vault import VaultManagerAsync
-from fastapi import Depends, Header, HTTPException, Request, status
+from fastapi import Depends, HTTPException, Request, status
 from redis.asyncio import Redis
 
 from coreason_ai_gateway.middleware.budget import check_budget, estimate_tokens

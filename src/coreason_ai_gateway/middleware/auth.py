@@ -10,12 +10,12 @@
 
 import hashlib
 import secrets
-from typing import Annotated
+from typing import Annotated, Awaitable, Callable
 
-from fastapi import Header, HTTPException, status, Request
+from coreason_identity.models import UserContext
+from fastapi import Header, HTTPException, Request, Response, status
 from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
-from coreason_identity.models import UserContext
 
 from coreason_ai_gateway.config import get_settings
 
@@ -31,7 +31,7 @@ class AuthMiddleware(BaseHTTPMiddleware):
     Instantiates a UserContext upon success and attaches it to request.state.
     """
 
-    async def dispatch(self, request: Request, call_next):
+    async def dispatch(self, request: Request, call_next: Callable[[Request], Awaitable[Response]]) -> Response:
         # 1. Skip Auth for Health Check
         if request.url.path == "/health":
             return await call_next(request)

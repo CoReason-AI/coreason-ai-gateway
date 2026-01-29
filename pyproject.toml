@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "coreason_ai_gateway"
-version = "0.1.0"
+version = "0.2.0"
 description = "A new Python project."
 authors = ["Gowtham A Rao <gowtham.rao@coreason.ai>"]
 license = "Prosperity-3.0"

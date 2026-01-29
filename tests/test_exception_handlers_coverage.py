@@ -11,13 +11,12 @@
 from unittest.mock import MagicMock
 
 import pytest
-from fastapi import Request
-from openai import APIConnectionError, InternalServerError
-
 from coreason_ai_gateway.exception_handlers import (
     upstream_connection_error_handler,
     upstream_internal_server_error_handler,
 )
+from fastapi import Request
+from openai import APIConnectionError, InternalServerError
 
 
 @pytest.mark.anyio
