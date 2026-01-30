@@ -12,6 +12,7 @@ from typing import Any
 from unittest.mock import AsyncMock, patch
 
 import pytest
+from coreason_identity.models import UserContext
 from fastapi import HTTPException
 
 from coreason_ai_gateway.middleware.budget import check_budget, estimate_tokens
@@ -48,9 +49,10 @@ def test_estimate_tokens_fallback() -> None:
 async def test_check_budget_sufficient() -> None:
     mock_redis = AsyncMock()
     mock_redis.get.return_value = "1000"
+    context = UserContext(sub="proj-123", email="test@example.com")
 
     # Should not raise
-    await check_budget("proj-123", 100, mock_redis)
+    await check_budget(context, 100, mock_redis)
     mock_redis.get.assert_awaited_once_with("budget:proj-123:remaining")
 
 
@@ -58,42 +60,46 @@ async def test_check_budget_sufficient() -> None:
 async def test_check_budget_exact() -> None:
     mock_redis = AsyncMock()
     mock_redis.get.return_value = "100"
+    context = UserContext(sub="proj-123", email="test@example.com")
 
     # Should not raise (assuming remaining >= cost is allowed)
-    await check_budget("proj-123", 100, mock_redis)
+    await check_budget(context, 100, mock_redis)
 
 
 @pytest.mark.anyio
 async def test_check_budget_insufficient() -> None:
     mock_redis = AsyncMock()
     mock_redis.get.return_value = "50"
+    context = UserContext(sub="proj-123", email="test@example.com")
 
     with pytest.raises(HTTPException) as exc:
-        await check_budget("proj-123", 100, mock_redis)
+        await check_budget(context, 100, mock_redis)
 
     assert exc.value.status_code == 402
-    assert exc.value.detail == "Budget exceeded for Project ID proj-123"
+    assert exc.value.detail == "Budget exceeded for User ID proj-123"
 
 
 @pytest.mark.anyio
 async def test_check_budget_missing_key() -> None:
     mock_redis = AsyncMock()
     mock_redis.get.return_value = None
+    context = UserContext(sub="proj-123", email="test@example.com")
 
     with pytest.raises(HTTPException) as exc:
-        await check_budget("proj-123", 100, mock_redis)
+        await check_budget(context, 100, mock_redis)
 
     assert exc.value.status_code == 402
-    assert exc.value.detail == "Budget exceeded for Project ID proj-123"
+    assert exc.value.detail == "Budget exceeded for User ID proj-123"
 
 
 @pytest.mark.anyio
 async def test_check_budget_corrupted_value() -> None:
     mock_redis = AsyncMock()
     mock_redis.get.return_value = "not-a-number"
+    context = UserContext(sub="proj-123", email="test@example.com")
 
     with pytest.raises(HTTPException) as exc:
-        await check_budget("proj-123", 100, mock_redis)
+        await check_budget(context, 100, mock_redis)
 
     assert exc.value.status_code == 402
-    assert exc.value.detail == "Budget exceeded for Project ID proj-123"
+    assert exc.value.detail == "Budget exceeded for User ID proj-123"

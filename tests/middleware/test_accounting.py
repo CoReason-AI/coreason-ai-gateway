@@ -12,6 +12,7 @@ import asyncio
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from coreason_identity.models import UserContext
 from openai.types import CompletionUsage
 from redis.exceptions import ConnectionError, RedisError
 
@@ -36,8 +37,9 @@ def mock_redis() -> MagicMock:
 @pytest.mark.anyio
 async def test_record_usage_success(mock_redis: MagicMock) -> None:
     usage = CompletionUsage(completion_tokens=10, prompt_tokens=20, total_tokens=30)
+    context = UserContext(sub="proj-123", email="test@example.com")
 
-    await record_usage("proj-123", usage, mock_redis)
+    await record_usage(context, usage, mock_redis)
 
     mock_redis.pipeline.assert_called_once()
     mock_pipeline = mock_redis.pipeline.return_value.__aenter__.return_value
@@ -48,14 +50,16 @@ async def test_record_usage_success(mock_redis: MagicMock) -> None:
 
 @pytest.mark.anyio
 async def test_record_usage_no_usage(mock_redis: MagicMock) -> None:
-    await record_usage("proj-123", None, mock_redis)
+    context = UserContext(sub="proj-123", email="test@example.com")
+    await record_usage(context, None, mock_redis)
     mock_redis.pipeline.assert_not_called()
 
 
 @pytest.mark.anyio
 async def test_record_usage_zero_tokens(mock_redis: MagicMock) -> None:
     usage = CompletionUsage(completion_tokens=0, prompt_tokens=0, total_tokens=0)
-    await record_usage("proj-123", usage, mock_redis)
+    context = UserContext(sub="proj-123", email="test@example.com")
+    await record_usage(context, usage, mock_redis)
     mock_redis.pipeline.assert_not_called()
 
 
@@ -63,11 +67,12 @@ async def test_record_usage_zero_tokens(mock_redis: MagicMock) -> None:
 async def test_record_usage_redis_failure(mock_redis: MagicMock) -> None:
     mock_pipeline = mock_redis.pipeline.return_value.__aenter__.return_value
     mock_pipeline.execute.side_effect = Exception("Redis down")
+    context = UserContext(sub="proj-123", email="test@example.com")
 
     usage = CompletionUsage(completion_tokens=10, prompt_tokens=20, total_tokens=30)
 
     # Should not raise exception (it logs it)
-    await record_usage("proj-123", usage, mock_redis)
+    await record_usage(context, usage, mock_redis)
 
     mock_pipeline.execute.assert_awaited_once()
 
@@ -79,8 +84,9 @@ async def test_record_usage_redis_failure(mock_redis: MagicMock) -> None:
 async def test_record_usage_negative_tokens(mock_redis: MagicMock) -> None:
     """Test that negative token counts (invalid state) are ignored."""
     usage = CompletionUsage(completion_tokens=-5, prompt_tokens=0, total_tokens=-5)
+    context = UserContext(sub="proj-123", email="test@example.com")
 
-    await record_usage("proj-123", usage, mock_redis)
+    await record_usage(context, usage, mock_redis)
 
     mock_redis.pipeline.assert_not_called()
 
@@ -90,8 +96,9 @@ async def test_record_usage_large_tokens(mock_redis: MagicMock) -> None:
     """Test handling of very large integer values."""
     large_val = 2**60  # Large integer
     usage = CompletionUsage(completion_tokens=large_val, prompt_tokens=0, total_tokens=large_val)
+    context = UserContext(sub="proj-123", email="test@example.com")
 
-    await record_usage("proj-123", usage, mock_redis)
+    await record_usage(context, usage, mock_redis)
 
     mock_pipeline = mock_redis.pipeline.return_value.__aenter__.return_value
     mock_pipeline.decrby.assert_called_once_with("budget:proj-123:remaining", large_val)
@@ -103,8 +110,9 @@ async def test_record_usage_complex_project_id(mock_redis: MagicMock) -> None:
     """Test proper key construction with complex project IDs."""
     complex_id = "group:subgroup/user@example.com"
     usage = CompletionUsage(completion_tokens=10, prompt_tokens=10, total_tokens=20)
+    context = UserContext(sub=complex_id, email="test@example.com")
 
-    await record_usage(complex_id, usage, mock_redis)
+    await record_usage(context, usage, mock_redis)
 
     mock_pipeline = mock_redis.pipeline.return_value.__aenter__.return_value
     mock_pipeline.decrby.assert_called_with(f"budget:{complex_id}:remaining", 20)
@@ -116,8 +124,11 @@ async def test_record_usage_concurrency(mock_redis: MagicMock) -> None:
     """Test concurrent execution of multiple usage records."""
     usage = CompletionUsage(completion_tokens=5, prompt_tokens=5, total_tokens=10)
 
+    def get_context(i: int) -> UserContext:
+        return UserContext(sub=f"proj-{i}", email="test@example.com")
+
     # Run 5 concurrent calls
-    tasks = [record_usage(f"proj-{i}", usage, mock_redis) for i in range(5)]
+    tasks = [record_usage(get_context(i), usage, mock_redis) for i in range(5)]
     await asyncio.gather(*tasks)
 
     assert mock_redis.pipeline.call_count == 5
@@ -132,9 +143,10 @@ async def test_record_usage_pipeline_creation_error(mock_redis: MagicMock) -> No
     """Test handling when redis.pipeline() raises a synchronous error."""
     mock_redis.pipeline.side_effect = RedisError("Pipeline creation failed")
     usage = CompletionUsage(completion_tokens=10, prompt_tokens=20, total_tokens=30)
+    context = UserContext(sub="proj-fail", email="test@example.com")
 
     # Should catch and log
-    await record_usage("proj-fail", usage, mock_redis)
+    await record_usage(context, usage, mock_redis)
 
     mock_redis.pipeline.assert_called_once()
 
@@ -144,10 +156,11 @@ async def test_record_usage_execute_connection_error(mock_redis: MagicMock) -> N
     """Test handling when pipe.execute() raises a specific Redis ConnectionError."""
     mock_pipeline = mock_redis.pipeline.return_value.__aenter__.return_value
     mock_pipeline.execute.side_effect = ConnectionError("Connection lost")
+    context = UserContext(sub="proj-conn-fail", email="test@example.com")
 
     usage = CompletionUsage(completion_tokens=10, prompt_tokens=20, total_tokens=30)
 
     # Should catch and log
-    await record_usage("proj-conn-fail", usage, mock_redis)
+    await record_usage(context, usage, mock_redis)
 
     mock_pipeline.execute.assert_awaited_once()

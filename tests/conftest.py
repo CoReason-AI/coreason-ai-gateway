@@ -31,7 +31,7 @@ def mock_dependencies() -> Generator[dict[str, Any], None, None]:
     with (
         patch("coreason_ai_gateway.server.redis.from_url") as mock_redis,
         patch("coreason_ai_gateway.server.VaultManagerAsync") as mock_vault,
-        patch("coreason_ai_gateway.server.CoreasonVaultConfig"),
+        patch("coreason_ai_gateway.server.CoreasonVaultConfig") as mock_vault_config,
         patch("coreason_ai_gateway.service.AsyncOpenAI") as mock_openai,
     ):
         # Redis setup
@@ -57,6 +57,7 @@ def mock_dependencies() -> Generator[dict[str, Any], None, None]:
         mock_vault.return_value = vault_instance
         # Default mock structure (nested auth)
         vault_instance.auth = AsyncMock()
+        # authenticate_approle is handled internally by constructor logic now, but we keep mock for safety
         vault_instance.auth.authenticate_approle = AsyncMock()
         vault_instance.auth.close = AsyncMock()
         vault_instance.get_secret.return_value = {"api_key": "sk-test"}
@@ -68,6 +69,7 @@ def mock_dependencies() -> Generator[dict[str, Any], None, None]:
         yield {
             "redis": redis_instance,
             "vault": vault_instance,
+            "vault_config": mock_vault_config,
             "openai": mock_openai,
             "client": openai_client,
             "pipeline": pipeline_mock,
