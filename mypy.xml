@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<testsuite errors="1" failures="0" name="mypy" skips="0" tests="1" time="0.000">
+  <testcase classname="mypy" file="mypy" line="1" name="mypy-py3_12-linux" time="0.000">
+    <failure message="mypy produced messages">error: --install-types not supported with incremental mode disabled</failure>
+  </testcase>
+</testsuite>

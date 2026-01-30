@@ -8,11 +8,15 @@
 #
 # Source Code: https://github.com/CoReason-AI/coreason_ai_gateway
 
-import pytest
-from fastapi import HTTPException
-from pydantic import SecretStr
+import hashlib
+from unittest.mock import patch
 
-from coreason_ai_gateway.middleware.auth import verify_gateway_token
+import pytest
+from fastapi import HTTPException, Request, Response
+from pydantic import SecretStr
+from starlette.types import Receive, Scope, Send
+
+from coreason_ai_gateway.middleware.auth import AuthMiddleware, verify_gateway_token
 
 
 @pytest.fixture
@@ -99,3 +103,150 @@ async def test_verify_gateway_token_no_space() -> None:
         await verify_gateway_token(header)
     assert exc.value.status_code == 401
     assert exc.value.detail == "Invalid Gateway Access Token"
+
+
+# --- AuthMiddleware Tests ---
+
+
+async def simple_app(scope: Scope, receive: Receive, send: Send) -> None:
+    response = Response("OK")
+    await response(scope, receive, send)
+
+
+@pytest.mark.anyio
+async def test_auth_middleware_valid(mock_settings: str) -> None:
+    token = mock_settings
+    middleware = AuthMiddleware(simple_app)
+
+    scope = {
+        "type": "http",
+        "headers": [
+            (b"authorization", f"Bearer {token}".encode()),
+            (b"x-coreason-project-id", b"proj-123"),
+        ],
+        "path": "/v1/chat/completions",
+    }
+    request = Request(scope)
+
+    async def call_next(req: Request) -> Response:
+        assert hasattr(req.state, "user_context")
+        # Verify sub is hashed and contains project_id
+        token_hash = hashlib.sha256(token.encode()).hexdigest()
+        expected_sub = f"{token_hash}:proj-123"
+        assert req.state.user_context.sub == expected_sub
+        assert req.state.user_context.project_context == "proj-123"
+        return Response("OK")
+
+    response = await middleware.dispatch(request, call_next)
+    assert response.status_code == 200
+
+
+@pytest.mark.anyio
+async def test_auth_middleware_valid_no_project(mock_settings: str) -> None:
+    token = mock_settings
+    middleware = AuthMiddleware(simple_app)
+
+    scope = {
+        "type": "http",
+        "headers": [
+            (b"authorization", f"Bearer {token}".encode()),
+        ],
+        "path": "/v1/chat/completions",
+    }
+    request = Request(scope)
+
+    async def call_next(req: Request) -> Response:
+        assert hasattr(req.state, "user_context")
+        # Verify sub is hash only
+        token_hash = hashlib.sha256(token.encode()).hexdigest()
+        assert req.state.user_context.sub == token_hash
+        assert req.state.user_context.project_context is None
+        return Response("OK")
+
+    response = await middleware.dispatch(request, call_next)
+    assert response.status_code == 200
+
+
+@pytest.mark.anyio
+async def test_auth_middleware_health_bypass(mock_settings: str) -> None:
+    middleware = AuthMiddleware(simple_app)
+
+    scope = {
+        "type": "http",
+        "headers": [],
+        "path": "/health",
+    }
+    request = Request(scope)
+
+    async def call_next(req: Request) -> Response:
+        # No context expected
+        assert not hasattr(req.state, "user_context")
+        return Response("OK")
+
+    response = await middleware.dispatch(request, call_next)
+    assert response.status_code == 200
+
+
+@pytest.mark.anyio
+async def test_auth_middleware_missing_header(mock_settings: str) -> None:
+    middleware = AuthMiddleware(simple_app)
+
+    scope = {
+        "type": "http",
+        "headers": [],
+        "path": "/protected",
+    }
+    request = Request(scope)
+
+    async def call_next(req: Request) -> Response:
+        return Response("Should Not Reach Here")
+
+    response = await middleware.dispatch(request, call_next)
+    assert response.status_code == 401
+
+
+@pytest.mark.anyio
+async def test_auth_middleware_invalid_token(mock_settings: str) -> None:
+    middleware = AuthMiddleware(simple_app)
+
+    scope = {
+        "type": "http",
+        "headers": [(b"authorization", b"Bearer invalid")],
+        "path": "/protected",
+    }
+    request = Request(scope)
+
+    async def call_next(req: Request) -> Response:
+        return Response("Should Not Reach Here")
+
+    response = await middleware.dispatch(request, call_next)
+    assert response.status_code == 401
+
+
+@pytest.mark.anyio
+async def test_auth_middleware_wrong_scheme(mock_settings: str) -> None:
+    middleware = AuthMiddleware(simple_app)
+    scope = {"type": "http", "headers": [(b"authorization", b"Basic token")], "path": "/protected"}
+    request = Request(scope)
+
+    async def call_next(req: Request) -> Response:
+        return Response("Should Not Reach")
+
+    response = await middleware.dispatch(request, call_next)
+    assert response.status_code == 401
+
+
+@pytest.mark.anyio
+async def test_auth_middleware_context_exception(mock_settings: str) -> None:
+    middleware = AuthMiddleware(simple_app)
+    token = mock_settings
+    scope = {"type": "http", "headers": [(b"authorization", f"Bearer {token}".encode())], "path": "/protected"}
+    request = Request(scope)
+
+    with patch("coreason_ai_gateway.middleware.auth.UserContext", side_effect=Exception("Boom")):
+
+        async def call_next(req: Request) -> Response:
+            return Response("Should Not Reach")
+
+        response = await middleware.dispatch(request, call_next)
+        assert response.status_code == 500
