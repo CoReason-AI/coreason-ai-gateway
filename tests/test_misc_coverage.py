@@ -12,6 +12,7 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from coreason_identity.models import UserContext
 from fastapi import HTTPException
 from openai.types import CompletionUsage
 
@@ -37,16 +38,17 @@ async def test_budget_coverage() -> None:
 
     mock_redis = AsyncMock()
     mock_redis.get.return_value = None
+    context = UserContext(sub="proj1", email="test@example.com")
 
     # Missing budget key
     with pytest.raises(HTTPException) as exc:
-        await check_budget("proj1", 100, mock_redis)
+        await check_budget(context, 100, mock_redis)
     assert exc.value.status_code == 402
 
     # Corrupted budget
     mock_redis.get.return_value = "not-int"
     with pytest.raises(HTTPException) as exc:
-        await check_budget("proj1", 100, mock_redis)
+        await check_budget(context, 100, mock_redis)
     assert exc.value.status_code == 402
 
 
@@ -88,11 +90,12 @@ async def test_accounting_coverage() -> None:
 
     # Should not raise, just log exception
     usage = CompletionUsage(completion_tokens=10, prompt_tokens=5, total_tokens=15)
+    context = UserContext(sub="proj1", email="test@example.com")
 
-    await record_usage("proj1", usage, mock_redis)
+    await record_usage(context, usage, mock_redis)
 
     # Total tokens <= 0
     mock_redis.pipeline.reset_mock()
     usage_zero = CompletionUsage(completion_tokens=0, prompt_tokens=0, total_tokens=0)
-    await record_usage("proj1", usage_zero, mock_redis)
+    await record_usage(context, usage_zero, mock_redis)
     assert not mock_redis.pipeline.called

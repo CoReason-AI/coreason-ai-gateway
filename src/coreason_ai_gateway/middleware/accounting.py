@@ -12,6 +12,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from coreason_identity.models import UserContext
 from openai.types import CompletionUsage
 from redis.asyncio import Redis
 
@@ -24,7 +25,7 @@ Updates Redis counters asynchronously.
 
 
 async def record_usage(
-    project_id: str,
+    context: UserContext,
     usage: CompletionUsage | None,
     redis_client: Redis[Any],
     trace_id: str | None = None,
@@ -34,7 +35,7 @@ async def record_usage(
     Updates both the remaining budget and the total usage counter.
 
     Args:
-        project_id (str): The Project ID associated with the request.
+        context (UserContext): The User Context containing identity.
         usage (CompletionUsage | None): The usage statistics from the OpenAI response.
         redis_client (Redis[Any]): The Async Redis client.
         trace_id (str | None): Optional trace ID for distributed tracing logs.
@@ -42,25 +43,26 @@ async def record_usage(
     Returns:
         None
     """
-    context = {}
+    user_id = context.sub
+    ctx = {}
     if trace_id:
-        context["trace_id"] = trace_id
+        ctx["trace_id"] = trace_id
 
-    with logger.contextualize(**context):
+    with logger.contextualize(**ctx):
         if not usage:
-            logger.warning(f"No usage data provided for Project ID {project_id}")
+            logger.warning(f"No usage data provided for User ID {user_id}")
             return
 
         total_tokens = usage.total_tokens
         if total_tokens <= 0:
             return
 
-        logger.info(f"Recording usage for Project ID {project_id}: {total_tokens} tokens")
+        logger.info(f"Recording usage for User ID {user_id}: {total_tokens} tokens")
 
         try:
             async with redis_client.pipeline() as pipe:
-                pipe.decrby(f"budget:{project_id}:remaining", total_tokens)
-                pipe.incrby(f"usage:{project_id}:total", total_tokens)
+                pipe.decrby(f"budget:{user_id}:remaining", total_tokens)
+                pipe.incrby(f"usage:{user_id}:total", total_tokens)
                 await pipe.execute()
         except Exception:
-            logger.exception(f"Failed to record usage for Project ID {project_id}")
+            logger.exception(f"Failed to record usage for User ID {user_id}")
