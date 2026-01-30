@@ -11,6 +11,8 @@
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from fastapi import HTTPException, Request
+
 from coreason_ai_gateway.dependencies import (
     get_redis_client,
     get_service,
@@ -18,7 +20,6 @@ from coreason_ai_gateway.dependencies import (
     validate_request_budget,
 )
 from coreason_ai_gateway.schemas import ChatCompletionRequest
-from fastapi import HTTPException, Request
 
 
 @pytest.mark.anyio
